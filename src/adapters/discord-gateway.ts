@@ -205,12 +205,22 @@ export class DiscordGatewayAdapter implements MailAlertPoster {
   // -------------------------------------------------------------------------
 
   private async onMessage(msg: Message): Promise<void> {
+    log.debug(
+      { channelId: msg.channelId, authorId: msg.author?.id, isBot: msg.author?.bot },
+      'gateway: MessageCreate received',
+    );
     if (msg.author?.bot) return;
     if (!this.client.user) return;
     if (msg.author.id === this.client.user.id) return;
 
     const ownerId = this.config.env.DISCORD_OWNER_USER_ID;
-    if (msg.author.id !== ownerId && !this.isAllowedUser(msg)) return;
+    if (msg.author.id !== ownerId && !this.isAllowedUser(msg)) {
+      log.debug(
+        { channelId: msg.channelId, authorId: msg.author?.id, ownerId },
+        'gateway: message filtered out (not owner, not allowlisted)',
+      );
+      return;
+    }
 
     const ctx = this.buildContext(msg);
     const channel = msg.channel;

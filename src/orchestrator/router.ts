@@ -219,6 +219,18 @@ export async function routeMessage(args: {
     return { kind: 'ignore', reason: 'channel not registered' };
   }
 
+  // 4. General channel + hub repo configured → route directly, no classification needed.
+  if (isGeneral && config.hubRepo) {
+    logEvent(db, {
+      type: 'router.classify',
+      channel: ctx.channelId,
+      threadId: ctx.threadId ?? undefined,
+      summary: `hub → ${config.hubRepo.fullName}`,
+      meta: { repo: config.hubRepo.fullName, mode: 'hub' },
+    });
+    return { kind: 'repo-work', repo: config.hubRepo };
+  }
+
   // 5. Classify via claude.
   const scratchDir = await ensureScratchDir(config.paths.dataDir);
   const prompt = buildClassifierPrompt(ctx.text, config.repoChannels);

@@ -60,6 +60,8 @@ export interface RepoEntry {
   autoSolveIssues?: boolean;
   /** Discord user IDs (besides the owner) allowed to send messages in this channel. */
   allowedUserIds?: string[];
+  /** If true, this repo is the "hub" — messages sent to the general channel route here by default. */
+  isHub?: boolean;
 }
 
 export interface GmailAccount {
@@ -71,6 +73,8 @@ export interface GmailAccount {
 export interface AppConfig {
   env: Env;
   repoChannels: RepoEntry[];
+  /** The hub repo — messages to the general channel route here by default (isHub: true). */
+  hubRepo?: RepoEntry;
   generalChannelId: string;
   /** Channel where mail alerts are posted (DISCORD_CHANNEL_MAIL_ALERTS or fallback to general) */
   mailAlertChannelId: string;
@@ -105,6 +109,7 @@ const RepoEntryConfigSchema = z.object({
   watchPrs: z.boolean().optional(),
   autoSolveIssues: z.boolean().optional(),
   allowedUserIds: z.array(z.string()).optional(),
+  isHub: z.boolean().optional(),
 });
 
 const GmailAccountConfigSchema = z.object({
@@ -143,9 +148,12 @@ export function loadConfig(): AppConfig {
     }))
     .filter((a) => a.refreshToken.length > 0);
 
+  const hubRepo = repoChannels.find((r) => r.isHub);
+
   return {
     env,
     repoChannels,
+    hubRepo,
     generalChannelId: env.DISCORD_CHANNEL_GENERAL,
     mailAlertChannelId: env.DISCORD_CHANNEL_MAIL_ALERTS ?? env.DISCORD_CHANNEL_GENERAL,
     clawChannelId: env.DISCORD_CHANNEL_CLAW,

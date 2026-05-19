@@ -1,31 +1,27 @@
 {
   "repos": [
     {
+      "channelName": "context-hub",
+      "channelId": "DISCORD_CHANNEL_GENERAL_ID_HERE",
+      "fullName": "your-github-username/context-hub",
+      "localPath": "/absolute/path/to/context-hub",
+      "category": "personal",
+      "description": "개인/팀 컨텍스트 허브. 이메일, 캘린더, 회의록, 메모 등 범용 작업의 기본 목적지.",
+      "isHub": true
+    },
+    {
       "channelName": "my-project",
       "channelId": "DISCORD_CHANNEL_ID_HERE",
       "fullName": "owner/repo-name",
       "localPath": "/absolute/path/to/repo",
       "category": "code",
       "description": "Brief description used in routing prompts"
-    },
-    {
-      "channelName": "personal-notes",
-      "channelId": "DISCORD_CHANNEL_ID_HERE",
-      "fullName": "owner/notes",
-      "localPath": "/absolute/path/to/notes",
-      "category": "personal",
-      "description": "Personal knowledge base",
-      "engine": "claude-code"
     }
   ],
   "gmail": [
     {
       "email": "you@example.com",
       "label": "personal"
-    },
-    {
-      "email": "work@company.com",
-      "label": "work"
     }
   ]
 }

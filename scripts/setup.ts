@@ -36,13 +36,72 @@ async function main() {
   console.log('╚══════════════════════════════════╝\n');
   console.log(`Working directory: ${clawDir}`);
 
-  // ── Prerequisite: claw.config.json ────────────────────────────────────────
+  // ── Context Hub (optional first-time setup) ───────────────────────────────
   const configPath = path.join(clawDir, 'claw.config.json');
-  if (!fs.existsSync(configPath)) {
-    console.error('\n[error] claw.config.json not found.');
-    console.error('  Copy claw.config.example.json, fill in your repos and Gmail accounts, then re-run setup.\n');
-    process.exit(1);
+  const hasConfig = fs.existsSync(configPath);
+  let hubChannelId = '';
+
+  if (!hasConfig) {
+    header('Context Hub (권장)');
+    console.log('  context-hub는 이메일·캘린더·메모 등 범용 작업의 기본 허브 레포입니다.');
+    console.log('  일반 채널에서 보내는 모든 메시지가 이 레포에서 실행됩니다.');
+    console.log('  템플릿: https://github.com/greatSumini/context-hub-template\n');
+    const createHub = await ask('context-hub를 지금 생성할까요? (y/n)', 'y');
+
+    if (createHub.toLowerCase() === 'y') {
+      let ghUser = '';
+      try {
+        ghUser = execSync('gh api user --jq .login 2>/dev/null', { encoding: 'utf-8' }).trim();
+      } catch { /* gh not authed yet */ }
+      const hubUser = await ask('GitHub 사용자명 또는 조직명', ghUser);
+      const hubLocalPath = await ask('로컬 경로', path.join(process.env['HOME'] ?? '~', 'context-hub'));
+      hubChannelId = await ask('Discord 채널 ID (일반 채널 — 이 채널의 모든 메시지가 허브로 라우팅됨)');
+
+      console.log('\n  context-hub 레포 생성 중...');
+      try {
+        execSync(
+          `gh repo create ${hubUser}/context-hub --private --template greatSumini/context-hub-template`,
+          { stdio: 'inherit' },
+        );
+        execSync(`gh repo clone ${hubUser}/context-hub "${hubLocalPath}"`, { stdio: 'inherit' });
+        console.log(`✓ context-hub 생성 및 clone 완료: ${hubLocalPath}`);
+      } catch {
+        console.log('  (레포 생성/clone 실패 — 수동으로 진행하세요)');
+      }
+
+      const hubConfig = {
+        repos: [
+          {
+            channelName: 'context-hub',
+            channelId: hubChannelId,
+            fullName: `${hubUser}/context-hub`,
+            localPath: hubLocalPath,
+            category: 'personal',
+            description: '개인/팀 컨텍스트 허브. 이메일, 캘린더, 메모 등 범용 작업의 기본 목적지.',
+            isHub: true,
+          },
+        ],
+        gmail: [] as { email: string; label: string }[],
+      };
+      fs.writeFileSync(configPath, JSON.stringify(hubConfig, null, 2) + '\n');
+      console.log(`✓ claw.config.json 생성 완료 (context-hub isHub: true)`);
+
+      console.log('\n  ── gogcli 인증 안내 ───────────────────────────────────────────');
+      console.log('  context-hub의 gmail / google-calendar skill은 gogcli를 사용합니다.');
+      console.log('  설치: brew install gogcli');
+      console.log('  인증:');
+      console.log('    1. https://console.cloud.google.com/auth/clients 에서 OAuth 클라이언트(Desktop app) 생성 후 JSON 다운로드');
+      console.log('    2. gog auth credentials ~/Downloads/client_secret_....json');
+      console.log('    3. gog auth add <your-email@gmail.com> --services gmail,calendar');
+      console.log('  ──────────────────────────────────────────────────────────────\n');
+    } else {
+      console.error('\n[error] claw.config.json not found.');
+      console.error('  Copy claw.config.example.json, fill in your repos and Gmail accounts, then re-run setup.\n');
+      process.exit(1);
+    }
   }
+
+  // ── Prerequisite: claw.config.json ────────────────────────────────────────
   const clawConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as {
     repos: { channelName: string }[];
     gmail: { email: string; label: string }[];
@@ -63,7 +122,7 @@ async function main() {
   const DISCORD_PUBLIC_KEY = await ask('Public key');
   const DISCORD_GUILD_ID = await ask('Guild (server) ID');
   const DISCORD_OWNER_USER_ID = await ask('Your Discord user ID');
-  const DISCORD_CHANNEL_GENERAL = await ask('Channel ID — general (catch-all)');
+  const DISCORD_CHANNEL_GENERAL = await ask('Channel ID — general (catch-all)', hubChannelId);
   const DISCORD_CHANNEL_CLAW = await ask('Channel ID — claw self-maintenance');
   const DISCORD_CHANNEL_MAIL_ALERTS = await ask(
     'Channel ID — mail alerts (blank = same as general)',
