@@ -219,11 +219,6 @@ export async function routeMessage(args: {
     return { kind: 'ignore', reason: 'channel not registered' };
   }
 
-  // 4. General channel needs mention or thread continuation. DMs always proceed.
-  if (isGeneral && !ctx.isMention && !ctx.threadId) {
-    return { kind: 'ignore', reason: 'general channel without mention or thread' };
-  }
-
   // 5. Classify via claude.
   const scratchDir = await ensureScratchDir(config.paths.dataDir);
   const prompt = buildClassifierPrompt(ctx.text, config.repoChannels);
