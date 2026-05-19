@@ -28,6 +28,60 @@ function header(title: string) {
   console.log(`\n── ${title} ${'─'.repeat(Math.max(0, 50 - title.length))}`);
 }
 
+interface DiscordAutoDetect {
+  applicationId: string;
+  guildId: string;
+  generalChannelId: string;
+  generalChannelName: string;
+}
+
+async function autoDetectDiscord(botToken: string): Promise<DiscordAutoDetect> {
+  // 1. Application ID from bot user
+  const meRes = await fetch('https://discord.com/api/v10/users/@me', {
+    headers: { Authorization: `Bot ${botToken}` },
+  });
+  if (!meRes.ok) throw new Error(`봇 토큰이 유효하지 않습니다 (${meRes.status})`);
+  const me = (await meRes.json()) as { id: string };
+  const applicationId = me.id;
+
+  // 2. Guild (server) the bot is in
+  const guildsRes = await fetch('https://discord.com/api/v10/users/@me/guilds', {
+    headers: { Authorization: `Bot ${botToken}` },
+  });
+  const guilds = (await guildsRes.json()) as Array<{ id: string; name: string }>;
+  if (!Array.isArray(guilds) || guilds.length === 0) {
+    throw new Error('봇이 서버에 초대되어 있지 않습니다. 봇을 Discord 서버에 먼저 초대해주세요.');
+  }
+
+  let guildId: string;
+  if (guilds.length === 1) {
+    guildId = guilds[0].id;
+    console.log(`  → 서버 자동 선택: ${guilds[0].name}`);
+  } else {
+    console.log('  봇이 여러 서버에 있습니다:');
+    guilds.forEach((g, i) => console.log(`    ${i + 1}. ${g.name} (${g.id})`));
+    const choice = await ask(`  사용할 서버 번호 (1-${guilds.length})`, '1');
+    guildId = guilds[Math.max(0, parseInt(choice, 10) - 1)].id;
+  }
+
+  // 3. Text channels — find '일반' or 'general', fallback to first
+  const chRes = await fetch(`https://discord.com/api/v10/guilds/${guildId}/channels`, {
+    headers: { Authorization: `Bot ${botToken}` },
+  });
+  const channels = (await chRes.json()) as Array<{ id: string; name: string; type: number; position: number }>;
+  const textChannels = channels
+    .filter((c) => c.type === 0)
+    .sort((a, b) => a.position - b.position);
+  if (textChannels.length === 0) throw new Error('서버에 텍스트 채널이 없습니다.');
+
+  const general =
+    textChannels.find((c) => c.name === '일반' || c.name.toLowerCase().includes('general')) ??
+    textChannels[0];
+  console.log(`  → 일반 채널 자동 선택: #${general.name} (${general.id})`);
+
+  return { applicationId, guildId, generalChannelId: general.id, generalChannelName: general.name };
+}
+
 async function main() {
   const clawDir = process.cwd();
 
@@ -116,18 +170,37 @@ async function main() {
 
   // ── Discord ───────────────────────────────────────────────────────────────
   header('Discord');
-  console.log('  All IDs are snowflakes — enable Developer Mode in Discord to copy them.');
+  console.log('  봇 토큰만 입력하면 나머지는 자동으로 탐지합니다.');
   const DISCORD_BOT_TOKEN = await ask('Bot token');
-  const DISCORD_APPLICATION_ID = await ask('Application ID');
-  const DISCORD_PUBLIC_KEY = await ask('Public key');
-  const DISCORD_GUILD_ID = await ask('Guild (server) ID');
-  const DISCORD_OWNER_USER_ID = await ask('Your Discord user ID');
-  const DISCORD_CHANNEL_GENERAL = await ask('Channel ID — general (catch-all)', hubChannelId);
-  const DISCORD_CHANNEL_CLAW = await ask('Channel ID — claw self-maintenance');
+  const DISCORD_PUBLIC_KEY = await ask('Public key (discord.com/developers → 앱 선택 → General Information)');
+  const DISCORD_OWNER_USER_ID = await ask('Your Discord user ID (Discord 설정 → 고급 → 개발자 모드 ON 후 본인 프로필 우클릭 → ID 복사)');
+
+  console.log('\n  Discord API로 서버와 채널을 자동 탐지 중...');
+  let DISCORD_APPLICATION_ID: string;
+  let DISCORD_GUILD_ID: string;
+  let DISCORD_CHANNEL_GENERAL: string;
+  try {
+    const detected = await autoDetectDiscord(DISCORD_BOT_TOKEN);
+    DISCORD_APPLICATION_ID = detected.applicationId;
+    DISCORD_GUILD_ID = detected.guildId;
+    DISCORD_CHANNEL_GENERAL = hubChannelId || detected.generalChannelId;
+    if (hubChannelId) {
+      console.log(`  → 일반 채널: context-hub 설정에서 가져옴 (${hubChannelId})`);
+    }
+  } catch (e) {
+    console.error(`\n  [자동 탐지 실패] ${(e as Error).message}`);
+    console.log('  수동으로 입력합니다.');
+    DISCORD_APPLICATION_ID = await ask('Application ID');
+    DISCORD_GUILD_ID = await ask('Guild (server) ID');
+    DISCORD_CHANNEL_GENERAL = await ask('Channel ID — general', hubChannelId);
+  }
+
   const DISCORD_CHANNEL_MAIL_ALERTS = await ask(
     'Channel ID — mail alerts (blank = same as general)',
     '',
   );
+  console.log('\n  (claw 전용 채널은 선택사항입니다. 지정하지 않으면 일반 채널에서 claw 유지보수 요청을 처리합니다.)');
+  const DISCORD_CHANNEL_CLAW = await ask('Channel ID — claw maintenance (선택, blank = 없음)', '');
 
   // ── Gmail ─────────────────────────────────────────────────────────────────
   header('Gmail');
@@ -168,8 +241,8 @@ async function main() {
     `DISCORD_PUBLIC_KEY=${DISCORD_PUBLIC_KEY}`,
     `DISCORD_GUILD_ID=${DISCORD_GUILD_ID}`,
     `DISCORD_CHANNEL_GENERAL=${DISCORD_CHANNEL_GENERAL}`,
-    `DISCORD_CHANNEL_CLAW=${DISCORD_CHANNEL_CLAW}`,
-    `DISCORD_CHANNEL_MAIL_ALERTS=${DISCORD_CHANNEL_MAIL_ALERTS}`,
+    ...(DISCORD_CHANNEL_CLAW ? [`DISCORD_CHANNEL_CLAW=${DISCORD_CHANNEL_CLAW}`] : []),
+    ...(DISCORD_CHANNEL_MAIL_ALERTS ? [`DISCORD_CHANNEL_MAIL_ALERTS=${DISCORD_CHANNEL_MAIL_ALERTS}`] : []),
     `DISCORD_OWNER_USER_ID=${DISCORD_OWNER_USER_ID}`,
     '',
     '# ── Gmail ────────────────────────────────────────────────────────',

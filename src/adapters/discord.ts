@@ -1588,11 +1588,12 @@ export class DiscordAdapter implements MessengerAdapter {
     try {
       const header = `**[자동 분석 리포트]** — \`${repoLabel}\` · 원본: <#${threadId}>\n\n`;
       const chunks = splitMessage(header + displayText, SAFE_CHUNK_SIZE);
-      const { messageId: firstMsgId } = await this.ipc.discordSend(this.config.clawChannelId, chunks[0] ?? '');
+      const clawOrGeneral = this.config.clawChannelId ?? this.config.generalChannelId;
+      const { messageId: firstMsgId } = await this.ipc.discordSend(clawOrGeneral, chunks[0] ?? '');
       if (firstMsgId) {
         const threadName = truncate(`[분석] ${repoShort} · ${dateStr}`, THREAD_NAME_MAX);
         const { threadId: newAnalysisThreadId } = await this.ipc.discordCreateThread(
-          this.config.clawChannelId,
+          clawOrGeneral,
           firstMsgId,
           threadName,
         );

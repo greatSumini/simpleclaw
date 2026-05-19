@@ -23,10 +23,14 @@ interface ClassifierResultUnclear {
   kind: 'unclear';
   question: string;
 }
+interface ClassifierResultClaw {
+  kind: 'claw';
+}
 type ClassifierResult =
   | ClassifierResultTrivial
   | ClassifierResultRepo
-  | ClassifierResultUnclear;
+  | ClassifierResultUnclear
+  | ClassifierResultClaw;
 
 /** Ensure the scratch dir exists. Returns absolute path. */
 async function ensureScratchDir(dataDir: string): Promise<string> {
@@ -35,8 +39,10 @@ async function ensureScratchDir(dataDir: string): Promise<string> {
   return dir;
 }
 
-/** Build the JSON-only Korean classifier prompt. */
-function buildClassifierPrompt(text: string, repos: RepoEntry[]): string {
+/** Build the JSON-only Korean classifier prompt.
+ *  When includeClaw=true, adds claw self-maintenance as an explicit routing option.
+ */
+function buildClassifierPrompt(text: string, repos: RepoEntry[], includeClaw = false): string {
   const repoLines = repos
     .map(
       (r) =>
@@ -44,18 +50,33 @@ function buildClassifierPrompt(text: string, repos: RepoEntry[]): string {
     )
     .join('\n');
 
+  const optionCount = includeClaw ? '넷' : '셋';
   const lines: string[] = [
-    '당신은 라우팅 분류기. 아래 사용자 메시지를 다음 셋 중 하나로 분류해 JSON 한 줄만 출력하라.',
+    `당신은 라우팅 분류기. 아래 사용자 메시지를 다음 ${optionCount} 중 하나로 분류해 JSON 한 줄만 출력하라.`,
     '',
     '1. trivial: 본인 개인 맥락 회상이 불필요한 일반 상식 질문 (단위 환산, 잘 알려진 사실, 짧은 정의 등)',
     '2. repo: 특정 repo에서의 작업·기록·회상이 필요. 다음 중 하나의 fullName을 골라라:',
     repoLines,
-    '3. unclear: 어느 repo인지 모호하거나 분류 불가',
+  ];
+
+  if (includeClaw) {
+    lines.push('3. claw: claw 에이전트 자체 유지보수 (재시작, 스킬 추가/수정, 설정 변경, 버그 수정, 로그 확인 등)');
+    lines.push('4. unclear: 어느 쪽인지 모호하거나 분류 불가');
+  } else {
+    lines.push('3. unclear: 어느 repo인지 모호하거나 분류 불가');
+  }
+
+  lines.push(
     '',
     '출력 형식 — 정확히 한 줄, JSON만 (markdown fence 절대 금지):',
     '{"kind":"trivial","answer":"<짧은 한국어 답변>"}',
     '또는',
     '{"kind":"repo","fullName":"<선택한 repo의 fullName>","instructions":"<원본 요청 그대로 또는 정제>"}',
+  );
+  if (includeClaw) {
+    lines.push('또는', '{"kind":"claw"}');
+  }
+  lines.push(
     '또는',
     '{"kind":"unclear","question":"<사용자에게 다시 물어볼 한국어 질문>"}',
     '',
@@ -66,7 +87,7 @@ function buildClassifierPrompt(text: string, repos: RepoEntry[]): string {
     '',
     '---',
     'Reply with EXACTLY one JSON line, no markdown fences, no commentary.',
-  ];
+  );
   return lines.join('\n');
 }
 
@@ -143,6 +164,9 @@ function parseClassifierOutput(raw: string): ClassifierResult | null {
     if (typeof obj.question !== 'string' || obj.question.length === 0) return null;
     return { kind: 'unclear', question: obj.question };
   }
+  if (kind === 'claw') {
+    return { kind: 'claw' };
+  }
   return null;
 }
 
@@ -188,7 +212,7 @@ export async function routeMessage(args: {
   }
 
   // 2a. claw 자체 유지보수 채널 → claw repo에서 직접 작업.
-  if (ctx.channelId === config.clawChannelId) {
+  if (config.clawChannelId && ctx.channelId === config.clawChannelId) {
     logEvent(db, {
       type: 'router.classify',
       channel: ctx.channelId,
@@ -219,8 +243,9 @@ export async function routeMessage(args: {
     return { kind: 'ignore', reason: 'channel not registered' };
   }
 
-  // 4. General channel + hub repo configured → route directly, no classification needed.
-  if (isGeneral && config.hubRepo) {
+  // 4. General channel + hub repo + dedicated claw channel → route directly to hub.
+  //    (claw messages go to the dedicated claw channel instead)
+  if (isGeneral && config.hubRepo && config.clawChannelId) {
     logEvent(db, {
       type: 'router.classify',
       channel: ctx.channelId,
@@ -232,8 +257,12 @@ export async function routeMessage(args: {
   }
 
   // 5. Classify via claude.
+  //    When general channel has a hubRepo but no dedicated claw channel, include claw
+  //    as a routing option so the classifier can distinguish hub work from claw maintenance.
+  const includeClaw = isGeneral && !!config.hubRepo && !config.clawChannelId;
+  const classifyRepos = includeClaw ? [config.hubRepo!] : config.repoChannels;
   const scratchDir = await ensureScratchDir(config.paths.dataDir);
-  const prompt = buildClassifierPrompt(ctx.text, config.repoChannels);
+  const prompt = buildClassifierPrompt(ctx.text, classifyRepos, includeClaw);
 
   let raw: string;
   try {
@@ -270,6 +299,17 @@ export async function routeMessage(args: {
       meta: { rawHead: raw.slice(0, 300) },
     });
     return { kind: 'ignore', reason: 'classifier failed' };
+  }
+
+  if (parsed.kind === 'claw') {
+    logEvent(db, {
+      type: 'router.classify',
+      channel: ctx.channelId,
+      threadId: ctx.threadId ?? undefined,
+      summary: 'claw-maintenance (via general channel)',
+      meta: { mode: 'claw-from-general' },
+    });
+    return { kind: 'claw-maintenance' };
   }
 
   if (parsed.kind === 'trivial') {

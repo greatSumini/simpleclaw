@@ -13,7 +13,8 @@ const Schema = z.object({
   DISCORD_PUBLIC_KEY: z.string().min(1),
   DISCORD_GUILD_ID: z.string().min(1),
   DISCORD_CHANNEL_GENERAL: z.string().min(1),
-  DISCORD_CHANNEL_CLAW: z.string().min(1),
+  /** Optional — if absent, claw-maintenance messages route through the general channel */
+  DISCORD_CHANNEL_CLAW: z.string().optional(),
   /** Optional — if absent, mail alerts fall back to DISCORD_CHANNEL_GENERAL */
   DISCORD_CHANNEL_MAIL_ALERTS: z.string().optional(),
   /** Optional — wiki ingest channel (claw-wiki). If absent, wiki-ingest is disabled. */
@@ -78,7 +79,8 @@ export interface AppConfig {
   generalChannelId: string;
   /** Channel where mail alerts are posted (DISCORD_CHANNEL_MAIL_ALERTS or fallback to general) */
   mailAlertChannelId: string;
-  clawChannelId: string;
+  /** Undefined when DISCORD_CHANNEL_CLAW is not set — claw-maintenance then routes via general channel */
+  clawChannelId: string | undefined;
   /** Channel for wiki ingest (claw-wiki). Undefined if DISCORD_CHANNEL_WIKI not set. */
   wikiChannelId: string | undefined;
   /** Absolute path to the LLM wiki directory */

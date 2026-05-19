@@ -35,18 +35,14 @@ gh --version        # GitHub CLI
 > 1. [discord.com/developers/applications](https://discord.com/developers/applications) → New Application
 > 2. Bot 탭 → Add Bot → Reset Token으로 봇 토큰 복사
 > 3. Privileged Gateway Intents → **MESSAGE CONTENT INTENT** 켜기
-> 4. OAuth2 → URL Generator → `bot` 스코프 + Send Messages / Read Message History / Manage Messages 권한 → 생성된 URL로 서버에 초대
->
-> **채널 ID 수집** (Discord 설정 → 고급 → 개발자 모드 ON → 채널 우클릭 → ID 복사)
+> 4. OAuth2 → URL Generator → `bot` 스코프 + `Send Messages / Read Message History / Manage Messages / View Channels` 권한 → 생성된 URL로 서버에 초대
 >
 > 준비가 되셨으면 아래 정보를 알려주세요:
-> - 봇 토큰
-> - Application ID
-> - Public Key
-> - Guild(서버) ID
-> - 본인 Discord User ID
-> - **일반 채널** ID (이메일·메모·질문 등 모든 요청을 보낼 채널)
-> - **claw 전용 채널** ID (claw 자체 코드 수정·디버그 전용)
+> - **봇 토큰**
+> - **Public Key** (앱 페이지 → General Information)
+> - **본인 Discord User ID** (Discord 설정 → 고급 → 개발자 모드 ON → 본인 프로필 우클릭 → ID 복사)
+>
+> 나머지(Application ID, 서버 ID, 채널 ID)는 봇 토큰으로 자동 탐지합니다.
 
 위 정보를 모두 받은 뒤 다음 단계로 진행한다.
 
@@ -83,13 +79,11 @@ pnpm run setup
 | Claude OAuth token | `claude setup-token` 실행 후 나오는 토큰 |
 | GitHub PAT | repo + workflow 스코프 PAT ([github.com/settings/tokens](https://github.com/settings/tokens)) |
 | Bot token | 1단계에서 받은 봇 토큰 |
-| Application ID | 1단계에서 받은 Application ID |
 | Public key | 1단계에서 받은 Public Key |
-| Guild ID | 1단계에서 받은 서버 ID |
 | Your Discord user ID | 1단계에서 받은 본인 User ID |
-| Channel ID — general | 1단계에서 받은 일반 채널 ID |
-| Channel ID — claw | 1단계에서 받은 claw 전용 채널 ID |
-| Channel ID — mail alerts | Enter (비워둠) |
+| (자동 탐지) Application ID, 서버 ID, 일반 채널 ID | 봇 토큰으로 자동 감지 — 확인만 |
+| Channel ID — mail alerts | Enter (비워둠 — 기본값: 일반 채널) |
+| Channel ID — claw maintenance | Enter (비워둠 — 선택사항) |
 | Gmail client ID / secret | Enter (비워둠 — 이메일은 context-hub skill로 처리) |
 | Dashboard port | 기본값 `3200` |
 | Dashboard secret | 8자 이상 임의 문자열 |
