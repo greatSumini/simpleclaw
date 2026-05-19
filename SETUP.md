@@ -1,6 +1,7 @@
 # claw 설치 지침
 
 > 이 문서는 Claude Code가 직접 읽고 실행하는 설치 지침입니다.
+> claw 레포를 아직 clone하지 않은 상태에서 시작해도 됩니다.
 > 아래 순서를 그대로 따라 진행하세요.
 
 ---
@@ -53,11 +54,15 @@ gh --version        # GitHub CLI
 
 ## 2. 클론 & 의존성 설치
 
+clone 위치를 사용자에게 묻는다 (기본값 제안: `~/claw`).
+
 ```bash
-git clone https://github.com/greatSumini/claw.git
-cd claw
+git clone https://github.com/greatSumini/claw.git <클론경로>
+cd <클론경로>
 pnpm install
 ```
+
+이후 모든 명령은 이 디렉터리 안에서 실행한다.
 
 ---
 
@@ -140,11 +145,13 @@ gog auth add <your-email@gmail.com> --services gmail,calendar
 - **claw 채널**: claw 자체 코드 수정 및 디버그 요청
 - **레포 채널** (선택): 특정 GitHub 레포 연결 후 해당 코드 작업 전용
 
-로그 확인: `tail -f ~/repos/claw/logs/launchd.log`
+로그 확인: `tail -f logs/launchd.log` (claw 클론 디렉터리 안에서)
 
 ---
 
 ## 문제 해결
+
+아래 명령은 claw를 clone한 디렉터리 안에서 실행한다.
 
 ```bash
 # 재시작
