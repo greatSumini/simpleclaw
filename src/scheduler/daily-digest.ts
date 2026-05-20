@@ -1,11 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { runClaude } from '../claude.js';
 import { log } from '../log.js';
 
 const CHECK_INTERVAL_MS = 30 * 60 * 1000; // 30분마다 체크
 const DIGEST_HOUR_KST = 12; // 정오(KST)에 실행
 const DISCORD_API = 'https://discord.com/api/v10';
 const VMC_TOPICS_BASE = 'https://vibemafiaclub.com/topics';
+const HAIKU_MODEL = 'claude-haiku-4-5-20251001';
+const REWRITE_TIMEOUT_MS = 30_000;
 
 interface DigestItem {
   title: string;
@@ -80,7 +83,42 @@ function todayLabel(): string {
   return `${yy}.${mm}.${dd}`;
 }
 
-function buildDigestMessage(items: DigestItem[]): string {
+async function rewriteTitlesForDigest(
+  items: DigestItem[],
+  cwd: string,
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (items.length === 0) return map;
+
+  const input = JSON.stringify(items.map((it) => ({ slug: it.slug, title: it.title })));
+  const prompt = `다음 JSON 배열의 각 title을 한국어 뉴스 기사 제목 스타일로 변환하라.
+규칙:
+- 핵심 내용 중심으로 간결하게
+- "~출시", "~발표", "~공개", "~선보여" 등 동사형으로 마무리
+- 원문 의미를 유지하고 과장 없이
+- 영어 고유명사(브랜드명·제품명)는 그대로 유지
+
+입력:
+${input}
+
+JSON 배열만 출력. 설명·마크다운 없이:
+[{"slug": "...", "title": "..."}]`;
+
+  try {
+    const result = await runClaude({ cwd, prompt, model: HAIKU_MODEL, timeoutMs: REWRITE_TIMEOUT_MS });
+    const jsonMatch = result.text.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) return map;
+    const parsed = JSON.parse(jsonMatch[0]) as Array<{ slug?: string; title?: string }>;
+    for (const entry of parsed) {
+      if (entry.slug && entry.title) map.set(entry.slug, entry.title);
+    }
+  } catch (err) {
+    log.warn({ err: (err as Error).message }, 'daily-digest: title rewrite failed, using originals');
+  }
+  return map;
+}
+
+function buildDigestMessage(items: DigestItem[], titleOverrides: Map<string, string>): string {
   const lines: string[] = [
     `VMC Daily Digest (${todayLabel()})`,
     '',
@@ -88,7 +126,8 @@ function buildDigestMessage(items: DigestItem[]): string {
     '',
   ];
   items.forEach((item, i) => {
-    lines.push(`${i + 1}. [${item.title}](${VMC_TOPICS_BASE}/${item.slug})`);
+    const displayTitle = titleOverrides.get(item.slug) ?? item.title;
+    lines.push(`${i + 1}. [${displayTitle}](${VMC_TOPICS_BASE}/${item.slug})`);
   });
   return lines.join('\n');
 }
@@ -144,7 +183,8 @@ export class DailyDigestScheduler {
       return { sent: 0 };
     }
 
-    const message = buildDigestMessage(items);
+    const titleOverrides = await rewriteTitlesForDigest(items, this.wikiDir);
+    const message = buildDigestMessage(items, titleOverrides);
     await postToDiscord(this.vmcBotToken, this.vmcChannelId, message);
 
     for (const item of items) {
