@@ -1140,9 +1140,11 @@ export class DiscordAdapter implements MessengerAdapter {
     const isUrl = /^https?:\/\/\S+$/.test(ctx.text.trim());
 
     let target: TargetChannel;
+    let threadContext: string | undefined;
     try {
       if (isThread) {
         target = { channelId, threadKey };
+        threadContext = await this.fetchThreadContext(channelId, msgId);
       } else {
         const prefix = isUrl ? 'ingest' : 'research';
         const title = makeThreadTitle(`${prefix}: ${ctx.text}`);
@@ -1163,7 +1165,7 @@ export class DiscordAdapter implements MessengerAdapter {
     }
 
     await this.runWithMutex(threadKey, () =>
-      this.runWikiIngestInThread(ctx, target, threadKey, isUrl),
+      this.runWikiIngestInThread(ctx, target, threadKey, isUrl, threadContext),
     );
   }
 
@@ -1172,13 +1174,15 @@ export class DiscordAdapter implements MessengerAdapter {
     target: TargetChannel,
     threadKey: string,
     isUrl: boolean,
+    threadContext?: string,
   ): Promise<void> {
     const channelLabel = ctx.channelName ?? ctx.channelId;
     const wikiDir = this.config.wikiDir;
 
-    const prompt = isUrl
+    const basePrompt = isUrl
       ? `다음 URL의 내용을 wiki에 추가해줘:\n\n${ctx.text.trim()}`
       : `다음 주제를 웹에서 리서치해서 wiki에 추가해줘:\n\n${ctx.text.trim()}`;
+    const prompt = threadContext ? `${threadContext}\n\n${basePrompt}` : basePrompt;
 
     const systemAppend = buildWikiIngestSystemAppend({ isUrl });
 
