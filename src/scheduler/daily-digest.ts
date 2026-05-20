@@ -7,7 +7,7 @@ const CHECK_INTERVAL_MS = 30 * 60 * 1000; // 30분마다 체크
 const DIGEST_HOUR_KST = 12; // 정오(KST)에 실행
 const DISCORD_API = 'https://discord.com/api/v10';
 const VMC_TOPICS_BASE = 'https://vibemafiaclub.com/topics';
-const HAIKU_MODEL = 'claude-haiku-4-5-20251001';
+const OPUS_MODEL = 'claude-opus-4-7';
 const REWRITE_TIMEOUT_MS = 30_000;
 
 interface DigestItem {
@@ -105,7 +105,7 @@ JSON 배열만 출력. 설명·마크다운 없이:
 [{"slug": "...", "title": "..."}]`;
 
   try {
-    const result = await runClaude({ cwd, prompt, model: HAIKU_MODEL, timeoutMs: REWRITE_TIMEOUT_MS });
+    const result = await runClaude({ cwd, prompt, model: OPUS_MODEL, timeoutMs: REWRITE_TIMEOUT_MS });
     const jsonMatch = result.text.match(/\[[\s\S]*\]/);
     if (!jsonMatch) return map;
     const parsed = JSON.parse(jsonMatch[0]) as Array<{ slug?: string; title?: string }>;
