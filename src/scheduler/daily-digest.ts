@@ -51,6 +51,29 @@ function markAsSent(filePath: string): void {
   fs.writeFileSync(filePath, updated, 'utf-8');
 }
 
+function extractUrlFromBody(content: string): string {
+  const patterns = [
+    /원본[_\s]?URL[:\s*]*(?:\*\*\s*)?(https?:\/\/\S+)/im,
+    /\*\*URL\*\*:\s*(https?:\/\/\S+)/im,
+    /원문[_\s]?링크:\s*(https?:\/\/\S+)/im,
+  ];
+  for (const re of patterns) {
+    const m = content.match(re);
+    if (m?.[1]) return m[1].replace(/[>)\]]+$/, '').trim();
+  }
+  return '';
+}
+
+function extractTitle(content: string, fm: Record<string, string>, slug: string): string {
+  if (fm.title) return fm.title;
+  // 한국어 title 필드
+  if (fm['제목']) return fm['제목'];
+  // 첫 번째 마크다운 heading
+  const headingMatch = content.match(/^#\s+(.+)$/m);
+  if (headingMatch) return headingMatch[1].replace(/^\[RAW\]\s*/i, '').trim();
+  return slug.replace(/-/g, ' ');
+}
+
 function scanUnsentItems(wikiDir: string): DigestItem[] {
   const rawDir = path.join(wikiDir, 'raw');
   if (!fs.existsSync(rawDir)) return [];
@@ -63,10 +86,10 @@ function scanUnsentItems(wikiDir: string): DigestItem[] {
       const content = fs.readFileSync(filePath, 'utf-8');
       const fm = parseFrontmatter(content);
       if (fm.digest_sent === 'true') continue;
-      const sourceUrl = fm.source_url ?? fm.hada_url ?? '';
+      const sourceUrl = fm.source_url ?? fm.hada_url ?? fm.url ?? extractUrlFromBody(content);
       if (!sourceUrl) continue;
       const slug = filename.replace(/\.md$/, '');
-      const title = fm.title ?? slug.replace(/-/g, ' ');
+      const title = extractTitle(content, fm, slug);
       items.push({ title, slug, filePath });
     } catch {
       // 파일 읽기 실패 시 건너뜀
