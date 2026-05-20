@@ -29,7 +29,9 @@ export const ARTIFACT_INSTRUCTION =
 
 const BASE_LINES = [
   '한국어로 응답',
-  '작업 끝나면 의미 단위로 git commit & push까지 완수. 첫 push 시 `gh auth setup-git` 먼저 (idempotent, GH_TOKEN 자동 인식). 실패 시 강행 금지(-f X), 보고만.',
+  '작업 끝나면 의미 단위로 git commit & push까지 완수. 첫 push 전: (1) `gh auth setup-git` 실행 (GH_TOKEN 자동 인식, idempotent). (2) Windows/NT AUTHORITY\\\\SYSTEM 환경이면 SSH push 대신 HTTPS 사용 — `git remote get-url origin`으로 확인 후 SSH URL(`git@github.com:...`)이면 `git remote set-url origin https://github.com/<owner>/<repo>` 전환 후 push. 실패 시 강행 금지(-f X), 보고만.',
+  '구현·수정 완료 후 반드시 실행 또는 dry-run 검증을 직접 수행하고 결과를 완료 메시지에 포함: **구현 내용** → **검증 결과** → **다음 단계** 3단 구조.',
+  '반복 사용 가능한 스크립트·워크플로우를 새로 구현했을 때, 관련 skill에 패턴을 추가할 것을 먼저 제안.',
   'WebFetch 실패(차단·타임아웃·비정상 응답) 시 사용자 재지시 없이 즉시 우회: `curl -A "Mozilla/5.0" <url>` → RSS feed(`https://rss.{domain}/{id}.xml` 또는 `{url}/feed`) → WebSearch 순으로 자동 시도. 우회 성공 시 결과를 그대로 활용하고 별도 실패 보고 없음.',
   '최종 답변은 핵심만 간결히 (Discord에 그대로 전달됨, 2000자 이상 시 자동 분할됨). 단, 복수의 문의·건(B2B, 고객, 메일 등)을 보고할 때는 각 건마다 채널·수신 시각·연락처·문의 원문을 생략 없이 포함.',
   '디스커버리 콜·미팅 초대·인터뷰 등 일정을 잡는 이메일 발송 완료 후에는 반드시 "통화/미팅 시간 확정 시 캘린더 일정도 바로 만들어드릴 수 있습니다"를 안내.',
@@ -61,6 +63,9 @@ export function buildRepoWorkSystemAppend(args: RepoWorkPromptArgs): string {
   lines.push(
     `- 이 채널/세션은 ${args.repo.fullName} 전용. 다른 repo 작업 필요해 보이면 사용자에게 안내만.`,
   );
+  if (args.repo.description) {
+    lines.push(`- 채널 컨텍스트: ${args.repo.description}`);
+  }
   if (args.repo.fullName === 'greatSumini/life-os') {
     lines.push(`- ${LIFE_OS_HINT}`);
   }
@@ -154,7 +159,7 @@ export function buildClawMaintenanceSystemAppend(
     '- 이 세션은 claw 자체 유지보수 전용. cwd는 claw repo (`greatSumini/claw`). 다른 repo 작업 필요해 보이면 사용자에게 안내만.',
   );
   lines.push(
-    '- 작업 끝나면 의미 단위로 git commit & push까지 완수. 첫 push 시 `gh auth setup-git` 먼저 (idempotent, GH_TOKEN 자동 인식). 실패 시 강행 금지(-f X), 보고만.',
+    '- 작업 끝나면 의미 단위로 git commit & push까지 완수. 첫 push 전: (1) `gh auth setup-git` 실행 (GH_TOKEN 자동 인식, idempotent). (2) Windows/NT AUTHORITY\\\\SYSTEM 환경이면 SSH push 대신 HTTPS 사용 — `git remote get-url origin`으로 확인 후 SSH URL(`git@github.com:...`)이면 `git remote set-url origin https://github.com/<owner>/<repo>` 전환 후 push. 실패 시 강행 금지(-f X), 보고만.',
   );
   lines.push(
     '- 소스/설정 변경(`src/**`, `package.json`, `tsconfig.json` 등 빌드 산출물에 영향)이면 `pnpm build`까지 완료해라. 그리고 **소스/설정 변경이면 예외 없이 응답의 마지막 줄에 다음 마커를 출력**: `' +
