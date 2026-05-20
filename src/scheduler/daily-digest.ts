@@ -183,10 +183,7 @@ export class DailyDigestScheduler {
       return { sent: 0 };
     }
 
-    const titleOverrides = await rewriteTitlesForDigest(items, this.wikiDir);
-    const message = buildDigestMessage(items, titleOverrides);
-    await postToDiscord(this.vmcBotToken, this.vmcChannelId, message);
-
+    // 전송 전에 먼저 마킹 — Discord 전송 후 재시작 시 중복 전송 방지
     for (const item of items) {
       try {
         markAsSent(item.filePath);
@@ -194,6 +191,10 @@ export class DailyDigestScheduler {
         log.warn({ err: (err as Error).message, file: item.filePath }, 'daily-digest: markAsSent failed');
       }
     }
+
+    const titleOverrides = await rewriteTitlesForDigest(items, this.wikiDir);
+    const message = buildDigestMessage(items, titleOverrides);
+    await postToDiscord(this.vmcBotToken, this.vmcChannelId, message);
 
     log.info({ count: items.length }, 'daily-digest: sent');
     return { sent: items.length };
