@@ -15,15 +15,15 @@ import {
 // ── Pure function tests ────────────────────────────────────────────────────
 
 describe('sanitizeSessionName', () => {
-  test('prefixes with claw-', () => {
-    assert.ok(sanitizeSessionName('foo').startsWith('claw-'));
+  test('prefixes with sc-', () => {
+    assert.ok(sanitizeSessionName('foo').startsWith('sc-'));
   });
 
   test('replaces non-alphanumeric chars with dashes', () => {
-    assert.equal(sanitizeSessionName('thread/123:abc'), 'claw-thread-123-abc');
+    assert.equal(sanitizeSessionName('thread/123:abc'), 'sc-thread-123-abc');
   });
 
-  test('truncates to max 53 chars total (claw- + 48)', () => {
+  test('truncates to max 53 chars total (sc- + 50)', () => {
     const long = 'a'.repeat(100);
     assert.ok(sanitizeSessionName(long).length <= 53);
   });

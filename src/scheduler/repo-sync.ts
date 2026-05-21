@@ -97,7 +97,7 @@ export class RepoSyncScheduler {
   private async run(): Promise<void> {
     const targets: SyncTarget[] = [
       ...this.config.repoChannels,
-      { fullName: 'greatSumini/claw', localPath: this.config.clawRepoPath },
+      { fullName: 'greatSumini/simpleclaw', localPath: this.config.simpleclawRepoPath },
     ];
 
     log.info({ count: targets.length }, 'repo-sync: running git pull on all repos');

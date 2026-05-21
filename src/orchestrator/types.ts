@@ -8,7 +8,7 @@ export type DiscordMessageContext = MessageContext;
 export type RouteDecision =
   | { kind: 'trivial'; answer: string }
   | { kind: 'repo-work'; repo: RepoEntry; instructions?: string }
-  | { kind: 'claw-maintenance'; instructions?: string }
+  | { kind: 'simpleclaw-maintenance'; instructions?: string }
   | { kind: 'wiki-ingest' }
   | { kind: 'ignore'; reason: string };
 

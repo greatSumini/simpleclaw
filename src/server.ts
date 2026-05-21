@@ -49,7 +49,7 @@ async function main(): Promise<void> {
   fs.mkdirSync(config.paths.dataDir, { recursive: true });
   fs.mkdirSync(config.paths.logsDir, { recursive: true });
 
-  log.info({ pid: process.pid, commit: commitHash, dbFile: config.paths.dbFile, repos: config.repoChannels.length }, 'claw gateway starting');
+  log.info({ pid: process.pid, commit: commitHash, dbFile: config.paths.dbFile, repos: config.repoChannels.length }, 'SimpleClaw gateway starting');
 
   const db = getDb(config.paths.dbFile);
 
@@ -127,15 +127,15 @@ async function main(): Promise<void> {
   await discord.start();
 
   // Repo sync: polls every 10 min, only runs when idle 30+ min
-  const clawOrGeneral = config.clawChannelId ?? config.generalChannelId;
+  const simpleclawOrGeneral = config.simpleclawChannelId ?? config.generalChannelId;
   const repoSync = new RepoSyncScheduler(config, db, (msg) =>
-    discord.postToChannel(clawOrGeneral, msg),
+    discord.postToChannel(simpleclawOrGeneral, msg),
   );
   repoSync.start();
 
   // Dreaming: memory decay/promote during sleep hours, once per day
   const dreaming = new DreamingScheduler(db, (msg) =>
-    discord.postToChannel(clawOrGeneral, msg),
+    discord.postToChannel(simpleclawOrGeneral, msg),
   );
   dreaming.start();
 
@@ -179,13 +179,13 @@ async function main(): Promise<void> {
     `📦 gmail: ${gmailCount}계정 | github: ${githubCount} repo`,
   ].join('\n');
   try {
-    await discord.postToChannel(config.clawChannelId ?? config.generalChannelId, startupMsg);
+    await discord.postToChannel(config.simpleclawChannelId ?? config.generalChannelId, startupMsg);
   } catch (err) {
     log.warn({ err: (err as Error).message }, 'startup notification failed');
   }
   logEvent(db, {
     type: 'gateway.start',
-    channel: 'claw',
+    channel: 'simpleclaw',
     summary: `commit: ${commitHash} | gmail:${gmailCount} github:${githubCount}`,
     meta: { commit: commitHash, startedAt, gmail: gmailCount, github: githubCount },
   });

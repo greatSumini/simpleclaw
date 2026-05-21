@@ -16,10 +16,10 @@ import { emitEvent } from '../dashboard/event-bus.js';
 import { routeMessage } from '../orchestrator/router.js';
 import {
   buildRepoWorkSystemAppend,
-  buildClawMaintenanceSystemAppend,
+  buildSimpleClawMaintenanceSystemAppend,
   buildWikiIngestSystemAppend,
   buildAnalysisSystemAppend,
-  CLAW_RESTART_MARKER,
+  SIMPLECLAW_RESTART_MARKER,
 } from '../orchestrator/prompt.js';
 import {
   loadCandidateContext,
@@ -529,8 +529,8 @@ export class DiscordAdapter implements MessengerAdapter {
       case 'repo-work':
         await this.handleRepoWork(ctx, decision.repo, decision.instructions, threadKey, msgId, channelId);
         return;
-      case 'claw-maintenance':
-        await this.handleClawMaintenance(ctx, threadKey, msgId, channelId);
+      case 'simpleclaw-maintenance':
+        await this.handleSimpleClawMaintenance(ctx, threadKey, msgId, channelId);
         return;
       case 'wiki-ingest':
         await this.handleWikiIngest(ctx, threadKey, msgId, channelId);
@@ -613,7 +613,7 @@ export class DiscordAdapter implements MessengerAdapter {
     const stopTyping = this.startTyping(target.channelId);
 
     try {
-      const skillsDir = path.join(this.config.clawRepoPath, 'skills');
+      const skillsDir = path.join(this.config.simpleclawRepoPath, 'skills');
 
       // 첨부파일 다운로드 + skill 탐지 병렬 실행
       const [savedPaths, skillResult] = await Promise.all([
@@ -815,7 +815,7 @@ export class DiscordAdapter implements MessengerAdapter {
       if (!isBtw) {
         extractAndSaveFacts(
           this.db,
-          this.config.clawRepoPath,
+          this.config.simpleclawRepoPath,
           repoScope(repo.fullName),
           ctx.text,
           result.text,
@@ -861,7 +861,7 @@ export class DiscordAdapter implements MessengerAdapter {
   // Claw self-maintenance flow
   // -------------------------------------------------------------------------
 
-  private async handleClawMaintenance(
+  private async handleSimpleClawMaintenance(
     ctx: MessageContext,
     threadKey: string,
     msgId: string,
@@ -874,7 +874,7 @@ export class DiscordAdapter implements MessengerAdapter {
       if (isThread) {
         target = { channelId, threadKey };
       } else {
-        const title = makeThreadTitle(ctx.text || 'claw 유지보수');
+        const title = makeThreadTitle(ctx.text || 'SimpleClaw 유지보수');
         const { threadId: newThreadId } = await this.ipc.discordCreateThread(
           channelId,
           msgId,
@@ -886,7 +886,7 @@ export class DiscordAdapter implements MessengerAdapter {
     } catch (err) {
       log.error(
         { err: (err as Error).message, channel: ctx.channelName ?? ctx.channelId },
-        'failed to resolve discord target / open thread (claw-maintenance)',
+        'failed to resolve discord target / open thread (simpleclaw-maintenance)',
       );
       return;
     }
@@ -896,18 +896,18 @@ export class DiscordAdapter implements MessengerAdapter {
       isThread && !existingSession ? await this.fetchThreadContext(channelId, msgId) : undefined;
 
     await this.runWithMutex(threadKey, () =>
-      this.runClawMaintenanceInThread(ctx, target, threadKey, threadContext),
+      this.runSimpleClawMaintenanceInThread(ctx, target, threadKey, threadContext),
     );
   }
 
-  private async runClawMaintenanceInThread(
+  private async runSimpleClawMaintenanceInThread(
     ctx: MessageContext,
     target: TargetChannel,
     threadKey: string,
     threadContext?: string,
   ): Promise<void> {
     const channelLabel = ctx.channelName ?? ctx.channelId;
-    const cwd = this.config.clawRepoPath;
+    const cwd = this.config.simpleclawRepoPath;
 
     const sessionRow = getSession(this.db, threadKey);
     const resumeId = sessionRow?.claudeSessionId;
@@ -931,15 +931,15 @@ export class DiscordAdapter implements MessengerAdapter {
       const baseText = ctx.text + attachmentNote(savedPaths);
       const userMessage = threadContext ? `${threadContext}\n\n${baseText}` : baseText;
 
-      // Load relevant memories for context injection (claw scope, Layer 2 hybrid + top Layer 1).
-      const clawScopes = [channelScope(threadKey), repoScope('greatSumini/claw'), GLOBAL_SCOPE];
-      const relevantMemoriesClaw = await loadRelevantMemoriesHybrid(this.db, clawScopes, ctx.text);
-      const relevantCandidatesClaw = loadCandidateContext(this.db, clawScopes, ctx.text);
-      const allMemoriesClaw = [...relevantMemoriesClaw, ...relevantCandidatesClaw];
+      // Load relevant memories for context injection (simpleclaw scope, Layer 2 hybrid + top Layer 1).
+      const simpleclawScopes = [channelScope(threadKey), repoScope('greatSumini/simpleclaw'), GLOBAL_SCOPE];
+      const relevantMemoriesSimpleClaw = await loadRelevantMemoriesHybrid(this.db, simpleclawScopes, ctx.text);
+      const relevantCandidatesSimpleClaw = loadCandidateContext(this.db, simpleclawScopes, ctx.text);
+      const allMemoriesSimpleClaw = [...relevantMemoriesSimpleClaw, ...relevantCandidatesSimpleClaw];
 
-      const baseSystemAppend = buildClawMaintenanceSystemAppend({
+      const baseSystemAppend = buildSimpleClawMaintenanceSystemAppend({
         isContinuation: Boolean(resumeId),
-        memories: allMemoriesClaw,
+        memories: allMemoriesSimpleClaw,
       });
       const systemAppend = skillResult.content
         ? `# 활성 Skill: ${skillResult.skill}\n\n${skillResult.content}\n\n---\n${baseSystemAppend}`
@@ -949,15 +949,15 @@ export class DiscordAdapter implements MessengerAdapter {
         type: 'claude.invoke',
         channel: channelLabel,
         threadId: threadKey,
-        summary: `claw-maintenance resume=${Boolean(resumeId)}`,
-        meta: { target: 'claw', resume: Boolean(resumeId) },
+        summary: `simpleclaw-maintenance resume=${Boolean(resumeId)}`,
+        meta: { target: 'simpleclaw', resume: Boolean(resumeId) },
       });
       emitEvent({
         ts: new Date().toISOString(),
         type: 'claude.invoke',
         channel: channelLabel,
         threadId: threadKey,
-        summary: `claw-maintenance resume=${Boolean(resumeId)}`,
+        summary: `simpleclaw-maintenance resume=${Boolean(resumeId)}`,
       });
 
       let result;
@@ -973,14 +973,14 @@ export class DiscordAdapter implements MessengerAdapter {
         const e = err instanceof ClaudeError ? err : (err as Error);
         log.error(
           { err: e.message, channel: channelLabel, threadId: threadKey },
-          'claude run failed in claw-maintenance',
+          'claude run failed in simpleclaw-maintenance',
         );
         logEvent(this.db, {
           type: 'claude.error',
           channel: channelLabel,
           threadId: threadKey,
           summary: e.message.slice(0, 300),
-          meta: { target: 'claw' },
+          meta: { target: 'simpleclaw' },
         });
         emitEvent({
           ts: new Date().toISOString(),
@@ -997,7 +997,7 @@ export class DiscordAdapter implements MessengerAdapter {
         } catch (sendErr) {
           log.error(
             { err: (sendErr as Error).message },
-            'failed to post claude error message (claw-maintenance)',
+            'failed to post claude error message (simpleclaw-maintenance)',
           );
         }
         return;
@@ -1035,20 +1035,20 @@ export class DiscordAdapter implements MessengerAdapter {
 
       const chunks = splitMessage(visibleText, SAFE_CHUNK_SIZE);
       if (chunks.length > 0) chunks[chunks.length - 1] += '\n' + clawUsageFooter;
-      let lastSentMsgIdClaw: string | null = null;
+      let lastSentMsgIdSimpleClaw: string | null = null;
       for (let i = 0; i < chunks.length; i++) {
         const isLast = i === chunks.length - 1;
         try {
-          if (isLast && relevantMemoriesClaw.length > 0) {
+          if (isLast && relevantMemoriesSimpleClaw.length > 0) {
             const sent = await this.safeSendWithId(target.channelId, chunks[i]);
-            if (sent) lastSentMsgIdClaw = sent.messageId ?? null;
+            if (sent) lastSentMsgIdSimpleClaw = sent.messageId ?? null;
           } else {
             await this.safeSend(target.channelId, chunks[i]);
           }
         } catch (err) {
           log.error(
             { err: (err as Error).message, channel: channelLabel, threadId: threadKey },
-            'failed to send response chunk (claw-maintenance)',
+            'failed to send response chunk (simpleclaw-maintenance)',
           );
           break;
         }
@@ -1058,23 +1058,23 @@ export class DiscordAdapter implements MessengerAdapter {
       await this.sendArtifacts(target.channelId, result.artifacts);
 
       // Track memory references for auto-analysis scoring later.
-      if (allMemoriesClaw.length > 0 && lastSentMsgIdClaw) {
+      if (allMemoriesSimpleClaw.length > 0 && lastSentMsgIdSimpleClaw) {
         try {
-          markMemoriesReferenced(this.db, relevantMemoriesClaw.map((m) => m.id));
-          for (const c of relevantCandidatesClaw) {
+          markMemoriesReferenced(this.db, relevantMemoriesSimpleClaw.map((m) => m.id));
+          for (const c of relevantCandidatesSimpleClaw) {
             updateCandidateScore(this.db, c.id, 5, threadKey);
           }
           recordMemoryReferences(
             this.db,
-            lastSentMsgIdClaw,
+            lastSentMsgIdSimpleClaw,
             [
-              ...relevantMemoriesClaw.map((m) => ({ id: m.id, layer: 'memory' as const })),
-              ...relevantCandidatesClaw.map((c) => ({ id: c.id, layer: 'candidate' as const })),
+              ...relevantMemoriesSimpleClaw.map((m) => ({ id: m.id, layer: 'memory' as const })),
+              ...relevantCandidatesSimpleClaw.map((c) => ({ id: c.id, layer: 'candidate' as const })),
             ],
             threadKey,
           );
         } catch (err) {
-          log.error({ err: (err as Error).message }, 'failed to record memory references (claw)');
+          log.error({ err: (err as Error).message }, 'failed to record memory references (simpleclaw)');
         }
       }
 
@@ -1082,7 +1082,7 @@ export class DiscordAdapter implements MessengerAdapter {
         upsertSession(this.db, {
           threadId: threadKey,
           claudeSessionId: result.sessionId,
-          repo: 'greatSumini/claw',
+          repo: 'greatSumini/simpleclaw',
           cwd,
           lastSkill: skillResult.skill,
           lastResponse: truncateForCache(visibleText),
@@ -1090,7 +1090,7 @@ export class DiscordAdapter implements MessengerAdapter {
       } catch (err) {
         log.error(
           { err: (err as Error).message, threadId: threadKey },
-          'failed to upsert session (claw-maintenance)',
+          'failed to upsert session (simpleclaw-maintenance)',
         );
       }
 
@@ -1101,7 +1101,7 @@ export class DiscordAdapter implements MessengerAdapter {
         summary: `${result.durationMs}ms ${visibleText.length}chars${restart ? ' [restart]' : ''}`,
         meta: {
           duration_seconds: result.durationMs / 1000,
-          target: 'claw',
+          target: 'simpleclaw',
           restart,
         },
       });
@@ -1118,7 +1118,7 @@ export class DiscordAdapter implements MessengerAdapter {
         channel: channelLabel,
         threadId: threadKey,
         summary: visibleText.slice(0, 500),
-        meta: { chunks: chunks.length, target: 'claw', restart },
+        meta: { chunks: chunks.length, target: 'simpleclaw', restart },
       });
       emitEvent({
         ts: new Date().toISOString(),
@@ -1321,7 +1321,7 @@ export class DiscordAdapter implements MessengerAdapter {
     this.ipc.drain();
     log.info(
       { channel: channelLabel, threadId: threadKey, inFlight: this.inFlightCount },
-      'claw restart scheduled — draining in-flight work',
+      'SimpleClaw restart scheduled — draining in-flight work',
     );
     if (this.inFlightCount === 0) {
       process.exit(0);
@@ -1378,8 +1378,8 @@ export class DiscordAdapter implements MessengerAdapter {
     await this.ipc.interactionReply(interactionId, token, '✅ Skill 생성 중...', true);
 
     try {
-      if (proposal.kind === 'claw') {
-        await this.createClawSkill(proposal);
+      if (proposal.kind === 'simpleclaw') {
+        await this.createSimpleClawSkill(proposal);
       } else {
         await this.createRepoSkill(proposal);
       }
@@ -1390,12 +1390,12 @@ export class DiscordAdapter implements MessengerAdapter {
     }
   }
 
-  private async createClawSkill(proposal: SkillProposal): Promise<void> {
-    const skillDir = path.join(this.config.clawRepoPath, 'skills', proposal.name);
+  private async createSimpleClawSkill(proposal: SkillProposal): Promise<void> {
+    const skillDir = path.join(this.config.simpleclawRepoPath, 'skills', proposal.name);
     await mkdir(skillDir, { recursive: true });
     await writeFile(path.join(skillDir, 'SKILL.md'), proposal.content, 'utf8');
 
-    const repoPath = this.config.clawRepoPath;
+    const repoPath = this.config.simpleclawRepoPath;
     await execFileAsync('git', ['-C', repoPath, 'add', `skills/${proposal.name}/SKILL.md`]);
     await execFileAsync('git', ['-C', repoPath, 'commit', '-m', `feat: skill 자동 생성 — ${proposal.name}`]);
     await execFileAsync('git', ['-C', repoPath, 'push']);
@@ -1561,7 +1561,7 @@ export class DiscordAdapter implements MessengerAdapter {
     let result;
     try {
       result = await runClaude({
-        cwd: this.config.clawRepoPath,
+        cwd: this.config.simpleclawRepoPath,
         prompt,
         systemAppend,
         timeoutMs: CLAUDE_TIMEOUT_MS,
@@ -1603,12 +1603,12 @@ export class DiscordAdapter implements MessengerAdapter {
     try {
       const header = `**[자동 분석 리포트]** — \`${repoLabel}\` · 원본: <#${threadId}>\n\n`;
       const chunks = splitMessage(header + displayText, SAFE_CHUNK_SIZE);
-      const clawOrGeneral = this.config.clawChannelId ?? this.config.generalChannelId;
-      const { messageId: firstMsgId } = await this.ipc.discordSend(clawOrGeneral, chunks[0] ?? '');
+      const simpleclawOrGeneral = this.config.simpleclawChannelId ?? this.config.generalChannelId;
+      const { messageId: firstMsgId } = await this.ipc.discordSend(simpleclawOrGeneral, chunks[0] ?? '');
       if (firstMsgId) {
         const threadName = truncate(`[분석] ${repoShort} · ${dateStr}`, THREAD_NAME_MAX);
         const { threadId: newAnalysisThreadId } = await this.ipc.discordCreateThread(
-          clawOrGeneral,
+          simpleclawOrGeneral,
           firstMsgId,
           threadName,
         );
@@ -1634,9 +1634,9 @@ export class DiscordAdapter implements MessengerAdapter {
                 repoFullName: p.repoFullName,
                 sourceThreadId: threadId,
               });
-              const emoji = p.kind === 'claw' ? '✨' : '📦';
+              const emoji = p.kind === 'simpleclaw' ? '✨' : '📦';
               const label = truncate(
-                `${emoji} ${p.kind === 'claw' ? 'Claw' : 'Repo'} skill: ${p.name}`,
+                `${emoji} ${p.kind === 'simpleclaw' ? 'SimpleClaw' : 'Repo'} skill: ${p.name}`,
                 80,
               );
               return {
@@ -1795,15 +1795,15 @@ export class DiscordAdapter implements MessengerAdapter {
 // ---------------------------------------------------------------------------
 
 /**
- * Detect & strip the claw restart marker. Marker must appear on its own
+ * Detect & strip the SimpleClaw restart marker. Marker must appear on its own
  * (anywhere in the body, but typically the last line). The marker line is
  * removed entirely; surrounding whitespace is normalized.
  */
 export function extractRestartMarker(text: string): { text: string; restart: boolean } {
-  const idx = text.lastIndexOf(CLAW_RESTART_MARKER);
+  const idx = text.lastIndexOf(SIMPLECLAW_RESTART_MARKER);
   if (idx === -1) return { text, restart: false };
   const before = text.slice(0, idx).replace(/\s+$/, '');
-  const after = text.slice(idx + CLAW_RESTART_MARKER.length).replace(/^\s+/, '');
+  const after = text.slice(idx + SIMPLECLAW_RESTART_MARKER.length).replace(/^\s+/, '');
   const cleaned = after.length > 0 ? `${before}\n${after}` : before;
   return { text: cleaned.trimEnd(), restart: true };
 }

@@ -9,8 +9,8 @@ describe('buildAnalysisPrompt', () => {
   });
 
   test('includes repo in analysis instruction', () => {
-    const prompt = buildAnalysisPrompt('thread-001', '(대화 기록 없음)', 'greatSumini/claw');
-    assert.ok(prompt.includes('greatSumini/claw'), 'analysis instruction should reference repo');
+    const prompt = buildAnalysisPrompt('thread-001', '(대화 기록 없음)', 'greatSumini/simpleclaw');
+    assert.ok(prompt.includes('greatSumini/simpleclaw'), 'analysis instruction should reference repo');
   });
 
   test('includes threadId in header', () => {
@@ -26,7 +26,7 @@ describe('buildAnalysisPrompt', () => {
 
   test('different repos produce different prompts', () => {
     const p1 = buildAnalysisPrompt('t', '...', 'vibemafiaclub/context-hub');
-    const p2 = buildAnalysisPrompt('t', '...', 'greatSumini/claw');
+    const p2 = buildAnalysisPrompt('t', '...', 'greatSumini/simpleclaw');
     assert.notEqual(p1, p2);
   });
 });

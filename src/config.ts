@@ -13,11 +13,11 @@ const Schema = z.object({
   DISCORD_PUBLIC_KEY: z.string().min(1),
   DISCORD_GUILD_ID: z.string().min(1),
   DISCORD_CHANNEL_GENERAL: z.string().min(1),
-  /** Optional — if absent, claw-maintenance messages route through the general channel */
-  DISCORD_CHANNEL_CLAW: z.string().optional(),
+  /** Optional — if absent, simpleclaw-maintenance messages route through the general channel */
+  DISCORD_CHANNEL_SIMPLECLAW: z.string().optional(),
   /** Optional — if absent, mail alerts fall back to DISCORD_CHANNEL_GENERAL */
   DISCORD_CHANNEL_MAIL_ALERTS: z.string().optional(),
-  /** Optional — wiki ingest channel (claw-wiki). If absent, wiki-ingest is disabled. */
+  /** Optional — wiki ingest channel (simpleclaw-wiki). If absent, wiki-ingest is disabled. */
   DISCORD_CHANNEL_WIKI: z.string().optional(),
   /** Absolute path to the LLM wiki directory. Defaults to ~/coding-agent-wiki */
   WIKI_DIR: z.string().default(path.resolve(os.homedir(), 'coding-agent-wiki')),
@@ -79,14 +79,14 @@ export interface AppConfig {
   generalChannelId: string;
   /** Channel where mail alerts are posted (DISCORD_CHANNEL_MAIL_ALERTS or fallback to general) */
   mailAlertChannelId: string;
-  /** Undefined when DISCORD_CHANNEL_CLAW is not set — claw-maintenance then routes via general channel */
-  clawChannelId: string | undefined;
-  /** Channel for wiki ingest (claw-wiki). Undefined if DISCORD_CHANNEL_WIKI not set. */
+  /** Undefined when DISCORD_CHANNEL_SIMPLECLAW is not set — simpleclaw-maintenance then routes via general channel */
+  simpleclawChannelId: string | undefined;
+  /** Channel for wiki ingest (simpleclaw-wiki). Undefined if DISCORD_CHANNEL_WIKI not set. */
   wikiChannelId: string | undefined;
   /** Absolute path to the LLM wiki directory */
   wikiDir: string;
-  /** Absolute path to this claw repository — derived from process.cwd() at startup */
-  clawRepoPath: string;
+  /** Absolute path to this SimpleClaw repository — derived from process.cwd() at startup */
+  simpleclawRepoPath: string;
   /** vmc-bot token and target channel for VMC Daily Digest (optional) */
   vmcDigest: { botToken: string; channelId: string } | null;
   gmail: GmailAccount[];
@@ -97,7 +97,7 @@ export interface AppConfig {
   };
 }
 
-// ── claw.config.json schema ──────────────────────────────────────────────────
+// ── simpleclaw.config.json schema ──────────────────────────────────────────────────
 
 const RepoEntryConfigSchema = z.object({
   channelName: z.string().min(1),
@@ -119,31 +119,31 @@ const GmailAccountConfigSchema = z.object({
   label: z.string().min(1),
 });
 
-const ClawConfigSchema = z.object({
+const SimpleClawConfigSchema = z.object({
   repos: z.array(RepoEntryConfigSchema).min(1),
   gmail: z.array(GmailAccountConfigSchema).default([]),
 });
 
-function loadClawConfig(): z.infer<typeof ClawConfigSchema> {
-  const configPath = path.resolve(process.cwd(), 'claw.config.json');
+function loadSimpleClawConfig(): z.infer<typeof SimpleClawConfigSchema> {
+  const configPath = path.resolve(process.cwd(), 'simpleclaw.config.json');
   if (!fs.existsSync(configPath)) {
     throw new Error(
-      `claw.config.json not found at ${configPath}.\n` +
-        `Copy claw.config.example.json, fill in your repos and Gmail accounts, then restart.`,
+      `simpleclaw.config.json not found at ${configPath}.\n` +
+        `Copy simpleclaw.config.example.json, fill in your repos and Gmail accounts, then restart.`,
     );
   }
   const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-  return ClawConfigSchema.parse(raw);
+  return SimpleClawConfigSchema.parse(raw);
 }
 
 export function loadConfig(): AppConfig {
   const env = Schema.parse(process.env);
-  const clawConfig = loadClawConfig();
+  const simpleclawConfig = loadSimpleClawConfig();
 
-  const repoChannels: RepoEntry[] = clawConfig.repos;
+  const repoChannels: RepoEntry[] = simpleclawConfig.repos;
 
   // Refresh tokens are indexed: GMAIL_REFRESH_TOKEN_1 → gmail[0], _2 → gmail[1], …
-  const gmail: GmailAccount[] = clawConfig.gmail
+  const gmail: GmailAccount[] = simpleclawConfig.gmail
     .map((account, i) => ({
       ...account,
       refreshToken: process.env[`GMAIL_REFRESH_TOKEN_${i + 1}`] ?? '',
@@ -158,10 +158,10 @@ export function loadConfig(): AppConfig {
     hubRepo,
     generalChannelId: env.DISCORD_CHANNEL_GENERAL,
     mailAlertChannelId: env.DISCORD_CHANNEL_MAIL_ALERTS ?? env.DISCORD_CHANNEL_GENERAL,
-    clawChannelId: env.DISCORD_CHANNEL_CLAW,
+    simpleclawChannelId: env.DISCORD_CHANNEL_SIMPLECLAW,
     wikiChannelId: env.DISCORD_CHANNEL_WIKI,
     wikiDir: env.WIKI_DIR,
-    clawRepoPath: process.cwd(),
+    simpleclawRepoPath: process.cwd(),
     vmcDigest:
       env.VMC_BOT_TOKEN && env.VMC_DIGEST_CHANNEL_ID
         ? { botToken: env.VMC_BOT_TOKEN, channelId: env.VMC_DIGEST_CHANNEL_ID }
@@ -170,7 +170,7 @@ export function loadConfig(): AppConfig {
     paths: {
       dataDir: env.DATA_DIR,
       logsDir: env.LOGS_DIR,
-      dbFile: path.join(env.DATA_DIR, 'claw.db'),
+      dbFile: path.join(env.DATA_DIR, 'simpleclaw.db'),
     },
   };
 }

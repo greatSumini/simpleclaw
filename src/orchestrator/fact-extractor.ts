@@ -35,7 +35,7 @@ JSON만 응답 (설명 없이):
 
 export async function extractAndSaveFacts(
   db: Database.Database,
-  clawRepoPath: string,
+  simpleclawRepoPath: string,
   scope: string,
   userMessage: string,
   assistantResponse: string,
@@ -44,13 +44,13 @@ export async function extractAndSaveFacts(
   if (userMessage.length < MIN_MESSAGE_LEN || assistantResponse.length < MIN_RESPONSE_LEN) return;
 
   const transcript =
-    `사용자: ${userMessage.slice(0, 600)}\n\nclaw: ${assistantResponse.slice(0, 600)}`;
+    `사용자: ${userMessage.slice(0, 600)}\n\nSimpleClaw: ${assistantResponse.slice(0, 600)}`;
   const prompt = PROMPT_TEMPLATE.replace('{TRANSCRIPT}', transcript);
 
   let result;
   try {
     result = await runClaude({
-      cwd: clawRepoPath,
+      cwd: simpleclawRepoPath,
       prompt,
       model: HAIKU_MODEL,
       timeoutMs: EXTRACTION_TIMEOUT_MS,

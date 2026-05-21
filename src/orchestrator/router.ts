@@ -23,14 +23,14 @@ interface ClassifierResultUnclear {
   kind: 'unclear';
   question: string;
 }
-interface ClassifierResultClaw {
-  kind: 'claw';
+interface ClassifierResultSimpleClaw {
+  kind: 'simpleclaw';
 }
 type ClassifierResult =
   | ClassifierResultTrivial
   | ClassifierResultRepo
   | ClassifierResultUnclear
-  | ClassifierResultClaw;
+  | ClassifierResultSimpleClaw;
 
 /** Ensure the scratch dir exists. Returns absolute path. */
 async function ensureScratchDir(dataDir: string): Promise<string> {
@@ -40,9 +40,9 @@ async function ensureScratchDir(dataDir: string): Promise<string> {
 }
 
 /** Build the JSON-only Korean classifier prompt.
- *  When includeClaw=true, adds claw self-maintenance as an explicit routing option.
+ *  When includeSimpleClaw=true, adds SimpleClaw self-maintenance as an explicit routing option.
  */
-function buildClassifierPrompt(text: string, repos: RepoEntry[], includeClaw = false): string {
+function buildClassifierPrompt(text: string, repos: RepoEntry[], includeSimpleClaw = false): string {
   const repoLines = repos
     .map(
       (r) =>
@@ -50,7 +50,7 @@ function buildClassifierPrompt(text: string, repos: RepoEntry[], includeClaw = f
     )
     .join('\n');
 
-  const optionCount = includeClaw ? '넷' : '셋';
+  const optionCount = includeSimpleClaw ? '넷' : '셋';
   const lines: string[] = [
     `당신은 라우팅 분류기. 아래 사용자 메시지를 다음 ${optionCount} 중 하나로 분류해 JSON 한 줄만 출력하라.`,
     '',
@@ -59,8 +59,8 @@ function buildClassifierPrompt(text: string, repos: RepoEntry[], includeClaw = f
     repoLines,
   ];
 
-  if (includeClaw) {
-    lines.push('3. claw: claw 에이전트 자체 유지보수 (재시작, 스킬 추가/수정, 설정 변경, 버그 수정, 로그 확인 등)');
+  if (includeSimpleClaw) {
+    lines.push('3. simpleclaw: SimpleClaw 에이전트 자체 유지보수 (재시작, 스킬 추가/수정, 설정 변경, 버그 수정, 로그 확인 등)');
     lines.push('4. unclear: 어느 쪽인지 모호하거나 분류 불가');
   } else {
     lines.push('3. unclear: 어느 repo인지 모호하거나 분류 불가');
@@ -73,8 +73,8 @@ function buildClassifierPrompt(text: string, repos: RepoEntry[], includeClaw = f
     '또는',
     '{"kind":"repo","fullName":"<선택한 repo의 fullName>","instructions":"<원본 요청 그대로 또는 정제>"}',
   );
-  if (includeClaw) {
-    lines.push('또는', '{"kind":"claw"}');
+  if (includeSimpleClaw) {
+    lines.push('또는', '{"kind":"simpleclaw"}');
   }
   lines.push(
     '또는',
@@ -164,8 +164,8 @@ function parseClassifierOutput(raw: string): ClassifierResult | null {
     if (typeof obj.question !== 'string' || obj.question.length === 0) return null;
     return { kind: 'unclear', question: obj.question };
   }
-  if (kind === 'claw') {
-    return { kind: 'claw' };
+  if (kind === 'simpleclaw') {
+    return { kind: 'simpleclaw' };
   }
   return null;
 }
@@ -211,16 +211,16 @@ export async function routeMessage(args: {
     return { kind: 'repo-work', repo: repoLocked };
   }
 
-  // 2a. claw 자체 유지보수 채널 → claw repo에서 직접 작업.
-  if (config.clawChannelId && ctx.channelId === config.clawChannelId) {
+  // 2a. SimpleClaw 자체 유지보수 채널 → SimpleClaw repo에서 직접 작업.
+  if (config.simpleclawChannelId && ctx.channelId === config.simpleclawChannelId) {
     logEvent(db, {
       type: 'router.classify',
       channel: ctx.channelId,
       threadId: ctx.threadId ?? undefined,
-      summary: 'claw-maintenance (channel-locked)',
-      meta: { mode: 'channel-locked', target: 'claw' },
+      summary: 'simpleclaw-maintenance (channel-locked)',
+      meta: { mode: 'channel-locked', target: 'simpleclaw' },
     });
-    return { kind: 'claw-maintenance' };
+    return { kind: 'simpleclaw-maintenance' };
   }
 
   // 2b. wiki ingest 채널 → URL/주제 자동 ingest.
@@ -243,9 +243,9 @@ export async function routeMessage(args: {
     return { kind: 'ignore', reason: 'channel not registered' };
   }
 
-  // 4. General channel + hub repo + dedicated claw channel → route directly to hub.
-  //    (claw messages go to the dedicated claw channel instead)
-  if (isGeneral && config.hubRepo && config.clawChannelId) {
+  // 4. General channel + hub repo + dedicated simpleclaw channel → route directly to hub.
+  //    (SimpleClaw messages go to the dedicated simpleclaw channel instead)
+  if (isGeneral && config.hubRepo && config.simpleclawChannelId) {
     logEvent(db, {
       type: 'router.classify',
       channel: ctx.channelId,
@@ -257,12 +257,12 @@ export async function routeMessage(args: {
   }
 
   // 5. Classify via claude.
-  //    When general channel has a hubRepo but no dedicated claw channel, include claw
-  //    as a routing option so the classifier can distinguish hub work from claw maintenance.
-  const includeClaw = isGeneral && !!config.hubRepo && !config.clawChannelId;
-  const classifyRepos = includeClaw ? [config.hubRepo!] : config.repoChannels;
+  //    When general channel has a hubRepo but no dedicated simpleclaw channel, include simpleclaw
+  //    as a routing option so the classifier can distinguish hub work from SimpleClaw maintenance.
+  const includeSimpleClaw = isGeneral && !!config.hubRepo && !config.simpleclawChannelId;
+  const classifyRepos = includeSimpleClaw ? [config.hubRepo!] : config.repoChannels;
   const scratchDir = await ensureScratchDir(config.paths.dataDir);
-  const prompt = buildClassifierPrompt(ctx.text, classifyRepos, includeClaw);
+  const prompt = buildClassifierPrompt(ctx.text, classifyRepos, includeSimpleClaw);
 
   let raw: string;
   try {
@@ -301,15 +301,15 @@ export async function routeMessage(args: {
     return { kind: 'ignore', reason: 'classifier failed' };
   }
 
-  if (parsed.kind === 'claw') {
+  if (parsed.kind === 'simpleclaw') {
     logEvent(db, {
       type: 'router.classify',
       channel: ctx.channelId,
       threadId: ctx.threadId ?? undefined,
-      summary: 'claw-maintenance (via general channel)',
-      meta: { mode: 'claw-from-general' },
+      summary: 'simpleclaw-maintenance (via general channel)',
+      meta: { mode: 'simpleclaw-from-general' },
     });
-    return { kind: 'claw-maintenance' };
+    return { kind: 'simpleclaw-maintenance' };
   }
 
   if (parsed.kind === 'trivial') {

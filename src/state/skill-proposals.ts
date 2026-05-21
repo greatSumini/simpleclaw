@@ -3,7 +3,7 @@ import type Database from 'better-sqlite3';
 export interface SkillProposal {
   id: number;
   ts: string;
-  kind: 'claw' | 'repo';
+  kind: 'simpleclaw' | 'repo';
   name: string;
   description: string;
   content: string;
@@ -28,7 +28,7 @@ function fromRow(row: SkillProposalDbRow): SkillProposal {
   return {
     id: row.id,
     ts: row.ts,
-    kind: row.kind as 'claw' | 'repo',
+    kind: row.kind as 'simpleclaw' | 'repo',
     name: row.name,
     description: row.description,
     content: row.content,
@@ -39,7 +39,7 @@ function fromRow(row: SkillProposalDbRow): SkillProposal {
 }
 
 export interface InsertSkillProposalArgs {
-  kind: 'claw' | 'repo';
+  kind: 'simpleclaw' | 'repo';
   name: string;
   description: string;
   content: string;

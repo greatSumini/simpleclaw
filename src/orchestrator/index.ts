@@ -3,8 +3,8 @@ export { routeMessage, routeMessage as routeDiscord } from './router.js';
 export { classifyMail } from './importance.js';
 export {
   buildRepoWorkSystemAppend,
-  buildClawMaintenanceSystemAppend,
+  buildSimpleClawMaintenanceSystemAppend,
   buildWikiIngestSystemAppend,
-  CLAW_RESTART_MARKER,
+  SIMPLECLAW_RESTART_MARKER,
 } from './prompt.js';
-export type { RepoWorkPromptArgs, ClawMaintenancePromptArgs, WikiIngestPromptArgs } from './prompt.js';
+export type { RepoWorkPromptArgs, SimpleClawMaintenancePromptArgs, WikiIngestPromptArgs } from './prompt.js';

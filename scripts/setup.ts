@@ -4,7 +4,7 @@
  * Run: pnpm run setup
  *
  * What it does:
- *   1. Reads claw.config.json to know how many Gmail accounts to prompt for
+ *   1. Reads simpleclaw.config.json to know how many Gmail accounts to prompt for
  *   2. Prompts for all required .env values
  *   3. Writes .env
  *   4. Generates a launchd plist (macOS only) and offers to bootstrap it
@@ -85,13 +85,13 @@ async function autoDetectDiscord(botToken: string): Promise<DiscordAutoDetect> {
 async function main() {
   const clawDir = process.cwd();
 
-  console.log('\n╔══════════════════════════════════╗');
-  console.log('║        claw setup wizard         ║');
-  console.log('╚══════════════════════════════════╝\n');
+  console.log('\n╔══════════════════════════════════════╗');
+  console.log('║       SimpleClaw setup wizard        ║');
+  console.log('╚══════════════════════════════════════╝\n');
   console.log(`Working directory: ${clawDir}`);
 
   // ── Context Hub (optional first-time setup) ───────────────────────────────
-  const configPath = path.join(clawDir, 'claw.config.json');
+  const configPath = path.join(clawDir, 'simpleclaw.config.json');
   const hasConfig = fs.existsSync(configPath);
   let hubChannelId = '';
 
@@ -138,7 +138,7 @@ async function main() {
         gmail: [] as { email: string; label: string }[],
       };
       fs.writeFileSync(configPath, JSON.stringify(hubConfig, null, 2) + '\n');
-      console.log(`✓ claw.config.json 생성 완료 (context-hub isHub: true)`);
+      console.log(`✓ simpleclaw.config.json 생성 완료 (context-hub isHub: true)`);
 
       console.log('\n  ── gogcli 인증 안내 ───────────────────────────────────────────');
       console.log('  context-hub의 gmail / google-calendar skill은 gogcli를 사용합니다.');
@@ -149,18 +149,18 @@ async function main() {
       console.log('    3. gog auth add <your-email@gmail.com> --services gmail,calendar');
       console.log('  ──────────────────────────────────────────────────────────────\n');
     } else {
-      console.error('\n[error] claw.config.json not found.');
-      console.error('  Copy claw.config.example.json, fill in your repos and Gmail accounts, then re-run setup.\n');
+      console.error('\n[error] simpleclaw.config.json not found.');
+      console.error('  Copy simpleclaw.config.example.json, fill in your repos and Gmail accounts, then re-run setup.\n');
       process.exit(1);
     }
   }
 
-  // ── Prerequisite: claw.config.json ────────────────────────────────────────
+  // ── Prerequisite: simpleclaw.config.json ────────────────────────────────────────
   const clawConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as {
     repos: { channelName: string }[];
     gmail: { email: string; label: string }[];
   };
-  console.log(`\nFound ${clawConfig.repos.length} repo(s) and ${clawConfig.gmail.length} Gmail account(s) in claw.config.json.`);
+  console.log(`\nFound ${clawConfig.repos.length} repo(s) and ${clawConfig.gmail.length} Gmail account(s) in simpleclaw.config.json.`);
 
   // ── Auth ──────────────────────────────────────────────────────────────────
   header('Auth');
@@ -199,8 +199,8 @@ async function main() {
     'Channel ID — mail alerts (blank = same as general)',
     '',
   );
-  console.log('\n  (claw 전용 채널은 선택사항입니다. 지정하지 않으면 일반 채널에서 claw 유지보수 요청을 처리합니다.)');
-  const DISCORD_CHANNEL_CLAW = await ask('Channel ID — claw maintenance (선택, blank = 없음)', '');
+  console.log('\n  (SimpleClaw 전용 채널은 선택사항입니다. 지정하지 않으면 일반 채널에서 SimpleClaw 유지보수 요청을 처리합니다.)');
+  const DISCORD_CHANNEL_SIMPLECLAW = await ask('Channel ID — SimpleClaw maintenance (선택, blank = 없음)', '');
 
   // ── Gmail ─────────────────────────────────────────────────────────────────
   header('Gmail');
@@ -241,7 +241,7 @@ async function main() {
     `DISCORD_PUBLIC_KEY=${DISCORD_PUBLIC_KEY}`,
     `DISCORD_GUILD_ID=${DISCORD_GUILD_ID}`,
     `DISCORD_CHANNEL_GENERAL=${DISCORD_CHANNEL_GENERAL}`,
-    ...(DISCORD_CHANNEL_CLAW ? [`DISCORD_CHANNEL_CLAW=${DISCORD_CHANNEL_CLAW}`] : []),
+    ...(DISCORD_CHANNEL_SIMPLECLAW ? [`DISCORD_CHANNEL_SIMPLECLAW=${DISCORD_CHANNEL_SIMPLECLAW}`] : []),
     ...(DISCORD_CHANNEL_MAIL_ALERTS ? [`DISCORD_CHANNEL_MAIL_ALERTS=${DISCORD_CHANNEL_MAIL_ALERTS}`] : []),
     `DISCORD_OWNER_USER_ID=${DISCORD_OWNER_USER_ID}`,
     '',
@@ -269,7 +269,7 @@ async function main() {
   // ── launchd plist (macOS only) ────────────────────────────────────────────
   if (process.platform !== 'darwin') {
     console.log('\nNon-macOS platform — skipping launchd plist generation.');
-    console.log('Start claw manually: pnpm build && pnpm start');
+    console.log('Start SimpleClaw manually: pnpm build && pnpm start');
     rl.close();
     return;
   }
@@ -278,7 +278,7 @@ async function main() {
   const nodePath = process.execPath;
   const uid = execSync('id -u').toString().trim();
   const home = process.env['HOME'] ?? `/Users/${process.env['USER']}`;
-  const plistLabel = 'com.claw';
+  const plistLabel = 'com.simpleclaw';
   const plistDir = path.join(home, 'Library', 'LaunchAgents');
   const plistPath = path.join(plistDir, `${plistLabel}.plist`);
 

@@ -14,12 +14,12 @@ import type { AppConfig } from '../config.js';
 // ---------------------------------------------------------------------------
 
 const REPO_CH = 'ch-repo-001';
-const CLAW_CH = 'ch-claw-001';
+const SIMPLECLAW_CH = 'ch-simpleclaw-001';
 const GENERAL_CH = 'ch-general-001';
 const OWNER_ID = 'owner-001';
 
 function makeConfig(): AppConfig {
-  const dataDir = path.join(os.tmpdir(), `claw-router-test-${process.pid}`);
+  const dataDir = path.join(os.tmpdir(), `simpleclaw-router-test-${process.pid}`);
   return {
     env: {
       CLAUDE_CODE_OAUTH_TOKEN: 'tok',
@@ -29,7 +29,7 @@ function makeConfig(): AppConfig {
       DISCORD_PUBLIC_KEY: 'pub-key',
       DISCORD_GUILD_ID: 'guild-id',
       DISCORD_CHANNEL_GENERAL: GENERAL_CH,
-      DISCORD_CHANNEL_CLAW: CLAW_CH,
+      DISCORD_CHANNEL_SIMPLECLAW: SIMPLECLAW_CH,
       DISCORD_CHANNEL_MAIL_ALERTS: REPO_CH,
       DISCORD_OWNER_USER_ID: OWNER_ID,
       GMAIL_CLIENT_ID: '',
@@ -53,16 +53,16 @@ function makeConfig(): AppConfig {
     ],
     generalChannelId: GENERAL_CH,
     mailAlertChannelId: REPO_CH,
-    clawChannelId: CLAW_CH,
+    simpleclawChannelId: SIMPLECLAW_CH,
     wikiChannelId: undefined,
     wikiDir: path.join(os.tmpdir(), 'coding-agent-wiki'),
-    clawRepoPath: '/tmp/repos/claw',
+    simpleclawRepoPath: '/tmp/repos/simpleclaw',
     vmcDigest: null,
     gmail: [],
     paths: {
       dataDir,
       logsDir: path.join(dataDir, 'logs'),
-      dbFile: path.join(dataDir, 'claw.db'),
+      dbFile: path.join(dataDir, 'simpleclaw.db'),
     },
   };
 }
@@ -119,15 +119,15 @@ describe('routeMessage: early-return paths', () => {
     db.close();
   });
 
-  test('claw maintenance channel → claw-maintenance (no Claude)', async () => {
+  test('simpleclaw maintenance channel → simpleclaw-maintenance (no Claude)', async () => {
     const config = makeConfig();
     const db = makeDb();
     const result = await routeMessage({
-      ctx: makeCtx({ channelId: CLAW_CH }),
+      ctx: makeCtx({ channelId: SIMPLECLAW_CH }),
       config,
       db,
     });
-    assert.equal(result.kind, 'claw-maintenance');
+    assert.equal(result.kind, 'simpleclaw-maintenance');
     db.close();
   });
 

@@ -33,7 +33,7 @@ export class TmuxError extends Error {
 // ── helpers (exported for testing) ────────────────────────────────────────
 
 export function sanitizeSessionName(key: string): string {
-  return `claw-${key.replace(/[^a-zA-Z0-9]/g, '-').slice(0, 48)}`;
+  return `sc-${key.replace(/[^a-zA-Z0-9]/g, '-').slice(0, 50)}`;
 }
 
 /** Strip ANSI escape codes from terminal output. */
@@ -234,7 +234,7 @@ export class TmuxRunner {
    * paste-buffer mechanism, then press Enter to submit.
    */
   async sendMessage(name: string, message: string): Promise<void> {
-    const tmpPath = path.join(os.tmpdir(), `claw-tmux-${Date.now()}.txt`);
+    const tmpPath = path.join(os.tmpdir(), `sc-tmux-${Date.now()}.txt`);
     await fs.writeFile(tmpPath, message, 'utf8');
     log.debug({ name, msgLen: message.length, tmpPath }, 'tmux: sending message via paste-buffer');
     try {

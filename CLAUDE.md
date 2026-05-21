@@ -1,8 +1,8 @@
-# claw — Claude Code 작업 지침
+# SimpleClaw — Claude Code 작업 지침
 
-## 재시작 마커 (`__CLAW_RESTART__`) 사용 규칙
+## 재시작 마커 (`__SIMPLECLAW_RESTART__`) 사용 규칙
 
-마커는 claw가 검출 후 응답 본문에서 제거하고 `launchctl kickstart`로 재시작한다.
+마커는 SimpleClaw가 검출 후 응답 본문에서 제거하고 `launchctl kickstart`로 재시작한다.
 마커가 제거되면 남은 텍스트가 Discord에 전송되므로, **마커만 단독으로 출력하면 빈 메시지가 전달된다.**
 
 **규칙: 마커 앞에 반드시 사람이 읽을 수 있는 텍스트를 한 줄 이상 포함할 것.**
@@ -11,10 +11,10 @@
 # 올바른 예
 재시작합니다.
 
-__CLAW_RESTART__
+__SIMPLECLAW_RESTART__
 
 # 잘못된 예 (Discord에 빈 메시지 전송됨)
-__CLAW_RESTART__
+__SIMPLECLAW_RESTART__
 ```
 
 ---
@@ -23,12 +23,12 @@ __CLAW_RESTART__
 
 ### 개요
 
-claw는 자체 skill 감지·주입 시스템을 갖는다. 유저 메시지가 들어오면 Haiku가 적합한 skill을 감지하고, 해당 skill의 내용을 메인 LLM 호출 시 systemAppend에 자동 주입한다.
+SimpleClaw는 자체 skill 감지·주입 시스템을 갖는다. 유저 메시지가 들어오면 Haiku가 적합한 skill을 감지하고, 해당 skill의 내용을 메인 LLM 호출 시 systemAppend에 자동 주입한다.
 
 ### 디렉토리 구조
 
 ```
-claw/
+simpleclaw/
 └── skills/
     └── {skill-name}/
         └── SKILL.md      # 필수. frontmatter에 name, description, triggers 포함
@@ -48,18 +48,18 @@ triggers:
 # (skill 본문 — 메인 LLM systemAppend에 주입되는 실제 내용)
 ```
 
-### Claw skill vs Repo skill 구분 원칙
+### SimpleClaw skill vs Repo skill 구분 원칙
 
-| 기준 | Claw skill | Repo (Claude Code) skill |
+| 기준 | SimpleClaw skill | Repo (Claude Code) skill |
 |------|-----------|--------------------------|
-| 저장 위치 | `claw/skills/` | `{repo}/.claude/skills/` |
-| 주입 주체 | claw 오케스트레이터 (세션 시작 전) | Claude Code 에이전트 (세션 도중) |
+| 저장 위치 | `simpleclaw/skills/` | `{repo}/.claude/skills/` |
+| 주입 주체 | SimpleClaw 오케스트레이터 (세션 시작 전) | Claude Code 에이전트 (세션 도중) |
 | 대상 | 인터랙션 패턴 / 커뮤니케이션 방식 | 코드베이스 내 구현 패턴 |
 | 핵심 질문 | "레포가 달라져도 이 지식이 필요한가?" | "이 레포 코드를 알아야 쓸 수 있는가?" |
 
-**Claw skill에 속하는 것:**
+**SimpleClaw skill에 속하는 것:**
 - 커뮤니케이션 (B2B 이메일 초안, 캘린더 미팅 협의)
-- claw 시스템 자체 지식 (디버그, 재시작 패턴, 아키텍처)
+- SimpleClaw 시스템 자체 지식 (디버그, 재시작 패턴, 아키텍처)
 - 레포에 무관하게 반복되는 크로스커팅 인터랙션 패턴
 
 **Repo skill에 속하는 것:**
@@ -67,9 +67,9 @@ triggers:
 - 레포 전용 CLI/스크립트 사용법
 - 해당 레포 코드베이스 지식 없이는 쓸 수 없는 것
 
-**중복 시:** repo skill로 단일화. claw skill은 repo skill 호출을 유도하는 힌트만 제공.
+**중복 시:** repo skill로 단일화. SimpleClaw skill은 repo skill 호출을 유도하는 힌트만 제공.
 
-### "이건 claw skill로 추가해두자" 명령 처리
+### "이건 SimpleClaw skill로 추가해두자" 명령 처리
 
 유저가 위 표현으로 명령하면:
 1. `skills/{적절한-이름}/SKILL.md` 파일 생성

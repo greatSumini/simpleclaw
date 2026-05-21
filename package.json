@@ -1,5 +1,5 @@
 {
-  "name": "claw",
+  "name": "simpleclaw",
   "version": "0.1.0",
   "description": "Personal AI agent gateway — Express server that fields Discord/Gmail and delegates work to vanilla Claude Code.",
   "type": "module",

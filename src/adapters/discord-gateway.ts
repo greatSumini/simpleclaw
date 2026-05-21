@@ -698,7 +698,7 @@ export class DiscordGatewayAdapter implements MailAlertPoster {
     const channelId = this.config.wikiChannelId;
     if (!channelId) return;
 
-    const sourcesPath = path.join(this.config.clawRepoPath, 'data', 'wiki-sources.json');
+    const sourcesPath = path.join(this.config.simpleclawRepoPath, 'data', 'wiki-sources.json');
     const today = new Date().toLocaleDateString('ko-KR', {
       timeZone: 'Asia/Seoul',
       year: 'numeric',

@@ -9,7 +9,7 @@ import { DiscordAdapter } from './adapters/discord.js';
 async function main(): Promise<void> {
   const config = loadConfig();
 
-  log.info({ pid: process.pid }, 'claw worker starting');
+  log.info({ pid: process.pid }, 'SimpleClaw worker starting');
 
   const db = getDb(config.paths.dbFile);
 
@@ -36,7 +36,7 @@ async function main(): Promise<void> {
     log.error({ reason }, '[worker] unhandledRejection');
   });
 
-  log.info('claw worker running');
+  log.info('SimpleClaw worker running');
 }
 
 main().catch((err) => {

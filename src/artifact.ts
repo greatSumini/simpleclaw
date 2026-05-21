@@ -8,14 +8,14 @@ export interface Artifact {
   caption?: string;
 }
 
-export const CLAW_ARTIFACT_MARKER = '__CLAW_ARTIFACT__';
+export const SIMPLECLAW_ARTIFACT_MARKER = '__SIMPLECLAW_ARTIFACT__';
 
 /**
  * Parse and strip artifact markers from Claude/Codex response text.
  *
  * Format:
- *   __CLAW_ARTIFACT__ {"kind":"file","path":"/abs/path","caption":"..."}
- *   __CLAW_ARTIFACT__ {"kind":"url","url":"https://...","caption":"..."}
+ *   __SIMPLECLAW_ARTIFACT__ {"kind":"file","path":"/abs/path","caption":"..."}
+ *   __SIMPLECLAW_ARTIFACT__ {"kind":"url","url":"https://...","caption":"..."}
  *
  * Lines containing the marker are removed; malformed JSON lines are kept as-is.
  */
@@ -24,12 +24,12 @@ export function extractArtifacts(text: string): { text: string; artifacts: Artif
   const cleanLines: string[] = [];
 
   for (const line of text.split('\n')) {
-    const idx = line.indexOf(CLAW_ARTIFACT_MARKER);
+    const idx = line.indexOf(SIMPLECLAW_ARTIFACT_MARKER);
     if (idx === -1) {
       cleanLines.push(line);
       continue;
     }
-    const jsonPart = line.slice(idx + CLAW_ARTIFACT_MARKER.length).trim();
+    const jsonPart = line.slice(idx + SIMPLECLAW_ARTIFACT_MARKER.length).trim();
     try {
       const obj = JSON.parse(jsonPart) as Record<string, unknown>;
       if (obj['kind'] === 'file' && typeof obj['path'] === 'string') {

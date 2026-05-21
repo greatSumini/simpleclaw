@@ -125,7 +125,7 @@ export async function classifyIssueComplexity(
   const prompt = buildClassifierPrompt(issue);
   let raw: string;
   try {
-    const result = await runClaude({ cwd: config.clawRepoPath, prompt, timeoutMs: CLASSIFIER_TIMEOUT_MS });
+    const result = await runClaude({ cwd: config.simpleclawRepoPath, prompt, timeoutMs: CLASSIFIER_TIMEOUT_MS });
     raw = result.text;
   } catch (err) {
     log.warn({ issue: issue.number, err: (err as Error).message }, 'issue classifier: runClaude failed, defaulting to complex');

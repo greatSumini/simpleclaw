@@ -1,8 +1,8 @@
-# claw
+# SimpleClaw
 
 > Discord/Gmail을 인터페이스로, `claude` CLI를 두뇌로 — macOS에서 24/7 돌아가는 개인 AI 에이전트 게이트웨이.
 
-메신저에 메시지를 보내면 claw가 적절한 컨텍스트(스킬·메모리·레포)를 조립해 `claude --print`를 headless로 실행하고, 결과를 다시 채널로 돌려준다. 레포 코드 수정부터 이메일 초안까지 — 모두 채팅 하나로.
+메신저에 메시지를 보내면 SimpleClaw가 적절한 컨텍스트(스킬·메모리·레포)를 조립해 `claude --print`를 headless로 실행하고, 결과를 다시 채널로 돌려준다. 레포 코드 수정부터 이메일 초안까지 — 모두 채팅 하나로.
 
 ---
 
@@ -11,9 +11,9 @@
 `claude`를 실행한 뒤, 아래 프롬프트를 그대로 붙여넣으면 됩니다.
 
 ```
-claw를 내 macOS에 설치하고 설정해줘.
-claw GitHub: https://github.com/greatSumini/claw
-Setup Guide 문서: https://github.com/greatSumini/claw/blob/main/SETUP.md
+SimpleClaw를 내 macOS에 설치하고 설정해줘.
+SimpleClaw GitHub: https://github.com/greatSumini/simpleclaw
+Setup Guide 문서: https://github.com/greatSumini/simpleclaw/blob/main/SETUP.md
 ```
 
 ---
@@ -84,7 +84,7 @@ Setup Guide 문서: https://github.com/greatSumini/claw/blob/main/SETUP.md
 ### 핵심 루프
 
 1. **분류** — Haiku가 메시지를 보고 `trivial` / `repo` / `unclear` 중 하나로 분류
-2. **스킬 주입** — `claw/skills/` + 레포의 `.claude/skills/`에서 가장 관련된 SKILL.md를 찾아 `systemAppend`에 삽입
+2. **스킬 주입** — `simpleclaw/skills/` + 레포의 `.claude/skills/`에서 가장 관련된 SKILL.md를 찾아 `systemAppend`에 삽입
 3. **메모리 주입** — 관련 메모리를 hybrid 검색(BM25 + 임베딩)으로 가져와 함께 주입
 4. **Claude 실행** — `claude --print --resume <session_id>` headless 실행, 결과 수신
 5. **응답 전송** — Discord thread에 포스팅 (2000자 자동 분할, 파일 첨부 지원)
@@ -96,12 +96,12 @@ Setup Guide 문서: https://github.com/greatSumini/claw/blob/main/SETUP.md
 
 ```bash
 # 1. 클론 & 의존성
-git clone https://github.com/greatSumini/claw.git && cd claw
+git clone https://github.com/greatSumini/simpleclaw.git && cd simpleclaw
 pnpm install
 
 # 2. 레포·Gmail 설정
-cp claw.config.example.json claw.config.json
-# claw.config.json 편집: 레포 목록, Gmail 계정 추가
+cp simpleclaw.config.example.json simpleclaw.config.json
+# simpleclaw.config.json 편집: 레포 목록, Gmail 계정 추가
 
 # 3. 대화형 설치 위저드 (.env 생성 + launchd plist 자동 생성)
 pnpm run setup
@@ -125,13 +125,13 @@ pnpm dev                     # 개발 모드 (tsx watch)
 
 ```bash
 # 등록 (로그인 시 자동 시작)
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.claw.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.simpleclaw.plist
 
 # 상태 확인
-launchctl list | grep com.claw
+launchctl list | grep com.simpleclaw
 
 # 소스 수정 후 재시작
-pnpm build && launchctl kickstart -k gui/$(id -u)/com.claw
+pnpm build && launchctl kickstart -k gui/$(id -u)/com.simpleclaw
 
 # 로그
 tail -f logs/launchd.log logs/launchd.error.log
@@ -141,7 +141,7 @@ tail -f logs/launchd.log logs/launchd.error.log
 
 ## 설정 파일
 
-### `claw.config.json` (gitignored)
+### `simpleclaw.config.json` (gitignored)
 
 레포 레지스트리와 Gmail 계정을 정의합니다. 소스코드를 수정하지 않고 설정만으로 레포를 추가/제거합니다.
 
@@ -176,8 +176,8 @@ tail -f logs/launchd.log logs/launchd.error.log
 ### 스킬 시스템
 
 ```
-claw/skills/              ← 레포 무관 claw 전역 스킬 (여기 추가)
-  claw-debug/SKILL.md
+simpleclaw/skills/         ← 레포 무관 SimpleClaw 전역 스킬 (여기 추가)
+  simpleclaw-debug/SKILL.md
   system-design-tdd/SKILL.md
   examples/               ← 템플릿 (비활성, 복사해서 커스터마이즈)
     b2b-email/SKILL.md
@@ -211,11 +211,11 @@ claw/skills/              ← 레포 무관 claw 전역 스킬 (여기 추가)
 
 ### 자동 재시작
 
-Claude가 소스를 수정한 뒤 응답에 `__CLAW_RESTART__` 마커를 포함하면:
+Claude가 소스를 수정한 뒤 응답에 `__SIMPLECLAW_RESTART__` 마커를 포함하면:
 
-1. claw가 마커를 제거하고 Discord에 나머지 텍스트 전송
+1. SimpleClaw가 마커를 제거하고 Discord에 나머지 텍스트 전송
 2. `pnpm build` (자동)
-3. `launchctl kickstart -k gui/<uid>/com.claw`
+3. `launchctl kickstart -k gui/<uid>/com.simpleclaw`
 4. 재시작 중 수신된 메시지는 queue에 저장 후 재생
 
 ### 자동 분석
@@ -304,11 +304,11 @@ htmx 기반 SSR 대시보드 (`:3200`, `DASHBOARD_SECRET` 인증):
 ## 디렉터리 구조
 
 ```
-claw.config.json          레포·Gmail 설정 (gitignored, claw.config.example.json 복사)
+simpleclaw.config.json    레포·Gmail 설정 (gitignored, simpleclaw.config.example.json 복사)
 .env                      비밀값 (gitignored, pnpm run setup으로 생성)
 src/
   server.ts               Express + 데몬 entry
-  config.ts               env + claw.config.json 파싱
+  config.ts               env + simpleclaw.config.json 파싱
   claude.ts               `claude --print` spawn wrapper
   adapters/
     discord.ts            Gateway 리스너, thread 관리, 재시작 핸들러
@@ -329,7 +329,7 @@ src/
     dreaming.ts           밤 시간 메모리 decay
   dashboard/
     routes.ts             /dashboard 엔드포인트 (htmx)
-skills/                   claw 전역 스킬 (레포 무관)
+skills/                   SimpleClaw 전역 스킬 (레포 무관)
   examples/               사용 예시 템플릿 (비활성)
 scripts/
   setup.ts                대화형 설치 위저드

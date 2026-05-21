@@ -7,7 +7,7 @@ data/router-scratch
 logs/
 .env
 .env.local
-claw.config.json
+simpleclaw.config.json
 *.log
 .DS_Store
 .tsbuildinfo
