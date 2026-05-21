@@ -573,6 +573,17 @@ export class GmailAdapter {
         { account: account.email, subject, fromEmail, reason: verdict.reason },
         'mail ignored',
       );
+      // Policy-ignore: brief notice on first occurrence in 7 days so user can unignore.
+      if (verdict.reason === 'sender ignore-listed' && isPolicyIgnoreFirstIn7Days(this.db, fromEmail, account.email)) {
+        try {
+          await this.poster.postToChannel(
+            this.config.mailAlertChannelId,
+            `📪 **${fromEmail}** 발신자의 메일이 도착했지만 무시 목록에 있어 건너뜁니다.\n해제하려면 이 채널에 \`무시 해제 ${fromEmail}\`를 입력하세요.`,
+          );
+        } catch (e) {
+          log.warn({ fromEmail, err: (e as Error).message }, 'gmail: failed to post policy-ignore notice');
+        }
+      }
       logEvent(this.db, {
         type: 'mail.ignored',
         channel: MAIL_ALERT_CHANNEL_NAME,
@@ -794,4 +805,18 @@ export class GmailAdapter {
     );
     return { processed: 0, alerted: 0 };
   }
+}
+
+// Returns true if there is no prior mail.ignored event for (fromEmail, account) in the last 7 days.
+// Used to rate-limit policy-ignore notices so the user isn't spammed.
+function isPolicyIgnoreFirstIn7Days(db: Database.Database, fromEmail: string, account: string): boolean {
+  const stmt = db.prepare<[string, string], { cnt: number }>(
+    `SELECT COUNT(*) AS cnt FROM events
+     WHERE type = 'mail.ignored'
+       AND json_extract(meta_json, '$.fromEmail') = ?
+       AND json_extract(meta_json, '$.account') = ?
+       AND ts >= datetime('now', '-7 days')`,
+  );
+  const row = stmt.get(fromEmail, account);
+  return (row?.cnt ?? 0) === 0;
 }

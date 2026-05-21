@@ -36,6 +36,7 @@ export interface MailAlertPoster {
     senderEmail?: string;
     senderAccount?: string;
   }): Promise<{ threadId: string; firstMessageId: string }>;
+  postToChannel(channelId: string, content: string): Promise<void>;
 }
 
 /** Full adapter contract shared by all messenger integrations. */

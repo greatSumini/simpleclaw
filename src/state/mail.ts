@@ -163,6 +163,11 @@ export function setSenderPolicy(db: Database.Database, args: SetSenderPolicyArgs
   });
 }
 
+export function deleteSenderPolicy(db: Database.Database, email: string): void {
+  if (!email) throw new Error('deleteSenderPolicy: email is required');
+  db.prepare('DELETE FROM sender_policies WHERE email = ?').run(email);
+}
+
 export function listSenderPolicies(
   db: Database.Database,
   account?: string,

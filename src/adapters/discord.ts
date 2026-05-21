@@ -58,6 +58,7 @@ import { syncNewTopics } from '../wiki/topic-sync.js';
 import { type Artifact } from '../artifact.js';
 import {
   setSenderPolicy,
+  deleteSenderPolicy,
   getMailThread,
   getMailThreadByMessageId,
   setMailThreadStatus,
@@ -465,6 +466,16 @@ export class DiscordAdapter implements MessengerAdapter {
     if (ctx.text.startsWith('/search')) {
       const query = ctx.text.slice('/search'.length).trim();
       await this.handleSearchCommand(query, ctx, channelId);
+      return;
+    }
+
+    // 무시 해제 {email} — remove sender from ignore list.
+    if (ctx.text.startsWith('무시 해제 ')) {
+      const email = ctx.text.slice('무시 해제 '.length).trim();
+      if (email) {
+        deleteSenderPolicy(this.db, email);
+        await this.ipc.discordSend(channelId, `✅ **${email}** 발신자의 무시 설정을 해제했습니다. 앞으로 이 발신자의 메일은 다시 알림이 옵니다.`);
+      }
       return;
     }
 
