@@ -30,11 +30,17 @@ function sumCost(db: Database.Database, since: string): number {
   );
 }
 
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
+  return `${n}`;
+}
+
 export function buildUsageFooter(db: Database.Database, snap: UsageSnapshot): string {
   let currentStr: string;
   if (snap.contextWindowMax > 0) {
     const pct = Math.round((snap.contextWindowUsed / snap.contextWindowMax) * 100);
-    currentStr = `${pct}%`;
+    currentStr = `${pct}% (${fmtTokens(snap.contextWindowUsed)}/${fmtTokens(snap.contextWindowMax)})`;
   } else {
     currentStr = 'n/a';
   }

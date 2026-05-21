@@ -173,6 +173,12 @@ interface StreamJsonObject {
     output_tokens?: number;
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
+    iterations?: Array<{
+      input_tokens?: number;
+      output_tokens?: number;
+      cache_creation_input_tokens?: number;
+      cache_read_input_tokens?: number;
+    }>;
   };
   modelUsage?: Record<string, { contextWindow?: number }>;
 }
@@ -304,14 +310,24 @@ function consumeJsonObject(acc: ParseAccumulator, obj: StreamJsonObject): void {
     acc.resultIsError = obj.subtype === 'error' || obj.is_error === true;
     if (typeof obj.result === 'string') acc.resultText = obj.result;
     if (typeof obj.total_cost_usd === 'number') acc.costUsd = obj.total_cost_usd;
-    // result.usage is aggregate across all API sub-calls (tool uses), so only use it
-    // as a fallback when no assistant-level usage was captured.
-    if (acc.contextWindowUsed === 0 && obj.usage) {
-      const u = obj.usage;
-      acc.contextWindowUsed =
-        (u.input_tokens ?? 0) +
-        (u.cache_creation_input_tokens ?? 0) +
-        (u.cache_read_input_tokens ?? 0);
+    if (obj.usage) {
+      // iterations[-1] = last API call's complete context (input + output). Prefer over
+      // assistant-event data because it includes output_tokens, giving the true post-response fill.
+      const lastIter = obj.usage.iterations?.at(-1);
+      if (lastIter) {
+        acc.contextWindowUsed =
+          (lastIter.input_tokens ?? 0) +
+          (lastIter.cache_creation_input_tokens ?? 0) +
+          (lastIter.cache_read_input_tokens ?? 0) +
+          (lastIter.output_tokens ?? 0);
+      } else if (acc.contextWindowUsed === 0) {
+        // Aggregate fallback — inflated for multi-turn sessions; only use if nothing better captured.
+        const u = obj.usage;
+        acc.contextWindowUsed =
+          (u.input_tokens ?? 0) +
+          (u.cache_creation_input_tokens ?? 0) +
+          (u.cache_read_input_tokens ?? 0);
+      }
     }
     if (obj.modelUsage) {
       const maxCtx = Math.max(0, ...Object.values(obj.modelUsage).map((m) => m.contextWindow ?? 0));
