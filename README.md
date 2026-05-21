@@ -6,6 +6,18 @@
 
 ---
 
+## 빠른 설치 (Claude Code 프롬프트)
+
+`claude`를 실행한 뒤, 아래 프롬프트를 그대로 붙여넣으면 됩니다.
+
+```
+claw를 내 macOS에 설치하고 설정해줘.
+claw GitHub: https://github.com/greatSumini/claw
+Setup Guide 문서: https://github.com/greatSumini/claw/blob/main/SETUP.md
+```
+
+---
+
 ## Prerequisites
 
 | Requirement | Notes |
