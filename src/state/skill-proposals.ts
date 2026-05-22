@@ -25,10 +25,12 @@ interface SkillProposalDbRow {
 }
 
 function fromRow(row: SkillProposalDbRow): SkillProposal {
+  // Backwards compat: legacy rows stored kind='claw' before the SimpleClaw rename.
+  const kind = row.kind === 'claw' ? 'simpleclaw' : (row.kind as 'simpleclaw' | 'repo');
   return {
     id: row.id,
     ts: row.ts,
-    kind: row.kind as 'simpleclaw' | 'repo',
+    kind,
     name: row.name,
     description: row.description,
     content: row.content,

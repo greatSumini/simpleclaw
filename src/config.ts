@@ -3,6 +3,7 @@ import { z } from 'zod';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
+import { log } from './log.js';
 
 const Schema = z.object({
   CLAUDE_CODE_OAUTH_TOKEN: z.string().min(1),
@@ -15,6 +16,8 @@ const Schema = z.object({
   DISCORD_CHANNEL_GENERAL: z.string().min(1),
   /** Optional — if absent, simpleclaw-maintenance messages route through the general channel */
   DISCORD_CHANNEL_SIMPLECLAW: z.string().optional(),
+  /** @deprecated Backwards compat alias for DISCORD_CHANNEL_SIMPLECLAW. Used when DISCORD_CHANNEL_SIMPLECLAW is absent. */
+  DISCORD_CHANNEL_CLAW: z.string().optional(),
   /** Optional — if absent, mail alerts fall back to DISCORD_CHANNEL_GENERAL */
   DISCORD_CHANNEL_MAIL_ALERTS: z.string().optional(),
   /** Optional — wiki ingest channel (simpleclaw-wiki). If absent, wiki-ingest is disabled. */
@@ -126,13 +129,24 @@ const SimpleClawConfigSchema = z.object({
 
 function loadSimpleClawConfig(): z.infer<typeof SimpleClawConfigSchema> {
   const configPath = path.resolve(process.cwd(), 'simpleclaw.config.json');
+  const legacyPath = path.resolve(process.cwd(), 'claw.config.json');
+
+  let resolvedPath = configPath;
   if (!fs.existsSync(configPath)) {
-    throw new Error(
-      `simpleclaw.config.json not found at ${configPath}.\n` +
-        `Copy simpleclaw.config.example.json, fill in your repos and Gmail accounts, then restart.`,
-    );
+    if (fs.existsSync(legacyPath)) {
+      log.warn(
+        { legacyPath, configPath },
+        'simpleclaw.config.json not found — falling back to legacy claw.config.json. Rename when convenient.',
+      );
+      resolvedPath = legacyPath;
+    } else {
+      throw new Error(
+        `simpleclaw.config.json not found at ${configPath}.\n` +
+          `Copy simpleclaw.config.example.json, fill in your repos and Gmail accounts, then restart.`,
+      );
+    }
   }
-  const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+  const raw = JSON.parse(fs.readFileSync(resolvedPath, 'utf-8'));
   return SimpleClawConfigSchema.parse(raw);
 }
 
@@ -152,13 +166,33 @@ export function loadConfig(): AppConfig {
 
   const hubRepo = repoChannels.find((r) => r.isHub);
 
+  // Backwards compat: prefer DISCORD_CHANNEL_SIMPLECLAW, fall back to legacy DISCORD_CHANNEL_CLAW.
+  const simpleclawChannelId = env.DISCORD_CHANNEL_SIMPLECLAW ?? env.DISCORD_CHANNEL_CLAW;
+  if (!env.DISCORD_CHANNEL_SIMPLECLAW && env.DISCORD_CHANNEL_CLAW) {
+    log.warn(
+      'DISCORD_CHANNEL_CLAW is deprecated — rename to DISCORD_CHANNEL_SIMPLECLAW in your .env when convenient.',
+    );
+  }
+
+  // Backwards compat: if only legacy claw.db exists, rename it to simpleclaw.db in place.
+  const dbFile = path.join(env.DATA_DIR, 'simpleclaw.db');
+  const legacyDbFile = path.join(env.DATA_DIR, 'claw.db');
+  if (!fs.existsSync(dbFile) && fs.existsSync(legacyDbFile)) {
+    log.warn({ legacyDbFile, dbFile }, 'migrating legacy claw.db → simpleclaw.db');
+    fs.renameSync(legacyDbFile, dbFile);
+    for (const suffix of ['-shm', '-wal']) {
+      const legacySidecar = legacyDbFile + suffix;
+      if (fs.existsSync(legacySidecar)) fs.renameSync(legacySidecar, dbFile + suffix);
+    }
+  }
+
   return {
     env,
     repoChannels,
     hubRepo,
     generalChannelId: env.DISCORD_CHANNEL_GENERAL,
     mailAlertChannelId: env.DISCORD_CHANNEL_MAIL_ALERTS ?? env.DISCORD_CHANNEL_GENERAL,
-    simpleclawChannelId: env.DISCORD_CHANNEL_SIMPLECLAW,
+    simpleclawChannelId,
     wikiChannelId: env.DISCORD_CHANNEL_WIKI,
     wikiDir: env.WIKI_DIR,
     simpleclawRepoPath: process.cwd(),
@@ -170,7 +204,7 @@ export function loadConfig(): AppConfig {
     paths: {
       dataDir: env.DATA_DIR,
       logsDir: env.LOGS_DIR,
-      dbFile: path.join(env.DATA_DIR, 'simpleclaw.db'),
+      dbFile,
     },
   };
 }

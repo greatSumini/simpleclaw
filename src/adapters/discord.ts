@@ -932,7 +932,13 @@ export class DiscordAdapter implements MessengerAdapter {
       const userMessage = threadContext ? `${threadContext}\n\n${baseText}` : baseText;
 
       // Load relevant memories for context injection (simpleclaw scope, Layer 2 hybrid + top Layer 1).
-      const simpleclawScopes = [channelScope(threadKey), repoScope('greatSumini/simpleclaw'), GLOBAL_SCOPE];
+      // Backwards compat: also search legacy `greatSumini/claw` scope so memories saved before the rename are still found.
+      const simpleclawScopes = [
+        channelScope(threadKey),
+        repoScope('greatSumini/simpleclaw'),
+        repoScope('greatSumini/claw'),
+        GLOBAL_SCOPE,
+      ];
       const relevantMemoriesSimpleClaw = await loadRelevantMemoriesHybrid(this.db, simpleclawScopes, ctx.text);
       const relevantCandidatesSimpleClaw = loadCandidateContext(this.db, simpleclawScopes, ctx.text);
       const allMemoriesSimpleClaw = [...relevantMemoriesSimpleClaw, ...relevantCandidatesSimpleClaw];
@@ -1794,16 +1800,26 @@ export class DiscordAdapter implements MessengerAdapter {
 // Shared utilities (exported for re-use by Gateway adapter and tests)
 // ---------------------------------------------------------------------------
 
+/** @deprecated Backwards compat: older skills/memories may still emit __CLAW_RESTART__. */
+const LEGACY_RESTART_MARKER = '__CLAW_RESTART__';
+
 /**
  * Detect & strip the SimpleClaw restart marker. Marker must appear on its own
  * (anywhere in the body, but typically the last line). The marker line is
  * removed entirely; surrounding whitespace is normalized.
+ *
+ * Also accepts the legacy __CLAW_RESTART__ marker for backwards compatibility.
  */
 export function extractRestartMarker(text: string): { text: string; restart: boolean } {
-  const idx = text.lastIndexOf(SIMPLECLAW_RESTART_MARKER);
+  let idx = text.lastIndexOf(SIMPLECLAW_RESTART_MARKER);
+  let markerLen = SIMPLECLAW_RESTART_MARKER.length;
+  if (idx === -1) {
+    idx = text.lastIndexOf(LEGACY_RESTART_MARKER);
+    markerLen = LEGACY_RESTART_MARKER.length;
+  }
   if (idx === -1) return { text, restart: false };
   const before = text.slice(0, idx).replace(/\s+$/, '');
-  const after = text.slice(idx + SIMPLECLAW_RESTART_MARKER.length).replace(/^\s+/, '');
+  const after = text.slice(idx + markerLen).replace(/^\s+/, '');
   const cleaned = after.length > 0 ? `${before}\n${after}` : before;
   return { text: cleaned.trimEnd(), restart: true };
 }
