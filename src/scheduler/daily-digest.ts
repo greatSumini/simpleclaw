@@ -9,6 +9,34 @@ const DISCORD_API = 'https://discord.com/api/v10';
 const VMC_TOPICS_BASE = 'https://vibemafiaclub.com/topics';
 const OPUS_MODEL = 'claude-opus-4-7';
 const REWRITE_TIMEOUT_MS = 30_000;
+const NAGER_DATE_API = 'https://date.nager.at/api/v3';
+
+// 연도별 한국 공휴일 캐시 (YYYY-MM-DD 문자열 집합)
+const koreanHolidayCache = new Map<number, Set<string>>();
+
+async function fetchKoreanHolidays(year: number): Promise<Set<string>> {
+  if (koreanHolidayCache.has(year)) return koreanHolidayCache.get(year)!;
+  try {
+    const res = await fetch(`${NAGER_DATE_API}/PublicHolidays/${year}/KR`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = (await res.json()) as Array<{ date: string }>;
+    const set = new Set(data.map((h) => h.date));
+    koreanHolidayCache.set(year, set);
+    return set;
+  } catch (err) {
+    log.warn({ err: (err as Error).message }, 'daily-digest: 공휴일 조회 실패, 공휴일 아닌 것으로 간주');
+    return new Set();
+  }
+}
+
+async function isKoreanHolidayOrWeekend(kstDate: Date): Promise<boolean> {
+  const dow = kstDate.getUTCDay(); // UTC 기준이지만 KST Date 객체이므로 요일 일치
+  if (dow === 0 || dow === 6) return true; // 일(0), 토(6)
+  const year = Number(kstDate.toISOString().slice(0, 4));
+  const dateStr = kstDate.toISOString().slice(0, 10);
+  const holidays = await fetchKoreanHolidays(year);
+  return holidays.has(dateStr);
+}
 
 interface DigestItem {
   title: string;
@@ -235,6 +263,12 @@ export class DailyDigestScheduler {
 
     if (hour < DIGEST_HOUR_KST || hour >= DIGEST_HOUR_KST + 1) {
       log.debug({ hour }, 'daily-digest: not in digest window, skipping');
+      return;
+    }
+
+    if (await isKoreanHolidayOrWeekend(nowKst)) {
+      log.info({ date: dateStr }, 'daily-digest: 한국 공휴일/주말, 전송 건너뜀');
+      this.lastDigestDate = dateStr;
       return;
     }
 
