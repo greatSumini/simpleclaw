@@ -118,6 +118,38 @@ export function buildWikiIngestSystemAppend(args: WikiIngestPromptArgs): string 
 }
 
 /**
+ * Patterns that indicate the user is setting a permanent/recurring preference
+ * rather than a one-time request. Used to inject a "session-only — persist?"
+ * footnote instruction into the systemAppend before calling Claude.
+ */
+const PERMANENT_RULE_PATTERNS: RegExp[] = [
+  /앞으로/,
+  /매번/,
+  /다음부터/,
+  /이제부터/,
+  /항상\s.{0,30}(해줘|해주세요|하자|하세요|적용|사용)/,
+  /모든\s.{0,15}(메일|이메일|초안|답장|답변|응답)/,
+];
+
+/**
+ * Returns true if the user message appears to be setting a permanent preference
+ * that should be persisted to a skill file — not just applied in the current session.
+ */
+export function detectPermanentRuleIntent(text: string): boolean {
+  return PERMANENT_RULE_PATTERNS.some((p) => p.test(text));
+}
+
+/**
+ * System instruction injected when permanent rule intent is detected.
+ * Tells Claude to add a "session-only — persist?" footnote UNLESS it actually
+ * writes the preference to a skill/config file in this run.
+ */
+export const PERMANENT_RULE_NOTICE_INSTRUCTION =
+  '사용자 메시지에 영구적 선호도/규칙 설정 의도("앞으로", "매번", "다음부터" 등)가 감지됨. ' +
+  '이 선호도를 skill 파일이나 설정 파일에 실제로 저장하지 않을 경우, 응답 마지막에 반드시 다음 안내를 추가: ' +
+  '"(이 선호도는 현재 대화에만 적용됩니다. Skill 파일에 영구 저장할까요?)" — 파일에 저장했다면 이 안내는 생략.';
+
+/**
  * Build the systemAppend block for a wiki source scan run.
  * sourcesPath는 wiki-sources.json의 절대 경로.
  * Claude가 소스를 fetch하고 wiki 후보를 번호 목록으로 보고한다.

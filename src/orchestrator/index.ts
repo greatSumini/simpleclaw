@@ -6,5 +6,7 @@ export {
   buildSimpleClawMaintenanceSystemAppend,
   buildWikiIngestSystemAppend,
   SIMPLECLAW_RESTART_MARKER,
+  detectPermanentRuleIntent,
+  PERMANENT_RULE_NOTICE_INSTRUCTION,
 } from './prompt.js';
 export type { RepoWorkPromptArgs, SimpleClawMaintenancePromptArgs, WikiIngestPromptArgs } from './prompt.js';

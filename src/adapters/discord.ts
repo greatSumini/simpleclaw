@@ -20,6 +20,8 @@ import {
   buildWikiIngestSystemAppend,
   buildAnalysisSystemAppend,
   SIMPLECLAW_RESTART_MARKER,
+  detectPermanentRuleIntent,
+  PERMANENT_RULE_NOTICE_INSTRUCTION,
 } from '../orchestrator/prompt.js';
 import {
   loadCandidateContext,
@@ -641,9 +643,12 @@ export class DiscordAdapter implements MessengerAdapter {
         isContinuation: Boolean(resumeId),
         memories: allMemories,
       });
-      const systemAppend = skillResult.content
+      const builtSystemAppend = skillResult.content
         ? `# 활성 Skill: ${skillResult.skill}\n\n${skillResult.content}\n\n---\n${baseSystemAppend}`
         : baseSystemAppend;
+      const systemAppend = detectPermanentRuleIntent(ctx.text)
+        ? `${builtSystemAppend}\n- ${PERMANENT_RULE_NOTICE_INSTRUCTION}`
+        : builtSystemAppend;
 
       logEvent(this.db, {
         type: 'claude.invoke',
@@ -947,9 +952,12 @@ export class DiscordAdapter implements MessengerAdapter {
         isContinuation: Boolean(resumeId),
         memories: allMemoriesSimpleClaw,
       });
-      const systemAppend = skillResult.content
+      const builtSystemAppend = skillResult.content
         ? `# 활성 Skill: ${skillResult.skill}\n\n${skillResult.content}\n\n---\n${baseSystemAppend}`
         : baseSystemAppend;
+      const systemAppend = detectPermanentRuleIntent(ctx.text)
+        ? `${builtSystemAppend}\n- ${PERMANENT_RULE_NOTICE_INSTRUCTION}`
+        : builtSystemAppend;
 
       logEvent(this.db, {
         type: 'claude.invoke',
