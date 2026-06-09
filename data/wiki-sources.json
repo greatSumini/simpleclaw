@@ -47,6 +47,11 @@
       "type": "blog"
     },
     {
+      "name": "Addy Osmani",
+      "url": "https://addyosmani.com",
+      "type": "blog"
+    },
+    {
       "name": "Geek News (X)",
       "url": "https://x.com/GeekNewsHada",
       "type": "x"
