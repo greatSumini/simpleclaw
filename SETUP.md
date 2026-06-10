@@ -35,7 +35,9 @@ gh --version        # GitHub CLI
 > 1. [discord.com/developers/applications](https://discord.com/developers/applications) → New Application
 > 2. Bot 탭 → Add Bot → Reset Token으로 봇 토큰 복사
 > 3. Privileged Gateway Intents → **MESSAGE CONTENT INTENT** 켜기
-> 4. OAuth2 → URL Generator → `bot` 스코프 + `Send Messages / Read Message History / Manage Messages / View Channels` 권한 → 생성된 URL로 서버에 초대
+> 4. OAuth2 → URL Generator → `bot` 스코프 + `Send Messages / Read Message History / Manage Messages / Manage Threads / Create Public Threads / View Channels` 권한 → 생성된 URL로 서버에 초대
+>
+> ⚠️ **봇에게 `Manage Channels`·`Manage Roles` 권한을 주지 말 것** (서버/카테고리/채널 오버라이드 모두). 채널 생성이 필요한 초기 설정 시에만 일시 부여하고 끝나면 즉시 회수한다. — 2026-06-10 ❌ 리액션 버그로 채널이 통째로 삭제된 사고의 재발 방지책 (코드 가드 + 권한 차단 이중 방어)
 >
 > 준비가 되셨으면 아래 정보를 알려주세요:
 > - **봇 토큰**
