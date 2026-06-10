@@ -301,7 +301,7 @@ export class DiscordAdapter implements MessengerAdapter {
           );
         });
       } else if (msg.type === 'discord.reaction') {
-        void this.onIpcReaction(msg.emoji, msg.msgId, msg.channelId, msg.userId, msg.isOwner).catch((err) => {
+        void this.onIpcReaction(msg.emoji, msg.msgId, msg.channelId, msg.userId, msg.isOwner, msg.isThread).catch((err) => {
           log.error({ err: (err as Error).message }, 'discord reaction handler crashed');
         });
       } else if (msg.type === 'discord.button') {
@@ -366,6 +366,7 @@ export class DiscordAdapter implements MessengerAdapter {
     channelId: string,
     _userId: string,
     isOwner: boolean,
+    isThread: boolean,
   ): Promise<void> {
     if (!isOwner) return;
     if (emoji !== '✅' && emoji !== '❌') return;
@@ -412,7 +413,12 @@ export class DiscordAdapter implements MessengerAdapter {
     }
 
     // General (non-mail) thread: ❌ deletes the thread channel.
+    // 스레드가 아닌 일반 채널의 메시지에 달린 ❌는 무시 — 채널 자체가 삭제되는 사고 방지.
     if (emoji !== '❌') return;
+    if (!isThread) {
+      log.info({ channelId, msgId }, 'reaction ❌ on non-thread channel ignored');
+      return;
+    }
 
     try {
       await this.ipc.discordDeleteThread(channelId);

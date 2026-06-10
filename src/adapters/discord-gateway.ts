@@ -264,6 +264,7 @@ export class DiscordGatewayAdapter implements MailAlertPoster {
       channelId: msg.channelId,
       userId: user.id,
       isOwner: true,
+      isThread: msg.channel.isThread(),
     });
   }
 
@@ -455,9 +456,12 @@ export class DiscordGatewayAdapter implements MailAlertPoster {
         const { reqId, channelId } = req;
         try {
           const channel = await this.client.channels.fetch(channelId);
-          if (channel && 'delete' in channel && typeof (channel as { delete?: unknown }).delete === 'function') {
-            await (channel as { delete: () => Promise<unknown> }).delete();
+          // 스레드만 삭제 허용 — 일반 채널이 넘어오면 채널 전체가 날아가므로 거부
+          if (!channel || !channel.isThread()) {
+            this.ipc.sendToWorker({ type: 'ipc.err', reqId, error: `refusing to delete non-thread channel ${channelId}` });
+            return;
           }
+          await channel.delete();
           this.ipc.sendToWorker({ type: 'ipc.ok', reqId });
         } catch (err) {
           this.ipc.sendToWorker({ type: 'ipc.err', reqId, error: (err as Error).message });
