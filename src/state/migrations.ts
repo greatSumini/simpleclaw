@@ -295,6 +295,16 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_usage_ledger_ts ON usage_ledger(ts);
     `,
   },
+  {
+    name: '016_imessage_state',
+    sql: `
+      CREATE TABLE IF NOT EXISTS imessage_state (
+        id             INTEGER PRIMARY KEY DEFAULT 1,
+        last_row_id    INTEGER NOT NULL DEFAULT 0,
+        last_polled_at TEXT
+      );
+    `,
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

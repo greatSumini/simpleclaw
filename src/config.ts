@@ -32,6 +32,16 @@ const Schema = z.object({
 
   MAIL_POLL_INTERVAL_SEC: z.coerce.number().default(300),
 
+  /** Set to true to enable iMessage polling (macOS only, requires Full Disk Access). */
+  IMESSAGE_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true' || v === '1')
+    .default('false'),
+  IMESSAGE_POLL_INTERVAL_SEC: z.coerce.number().default(60),
+  /** Optional — if absent, iMessage alerts fall back to DISCORD_CHANNEL_MAIL_ALERTS or DISCORD_CHANNEL_GENERAL */
+  DISCORD_CHANNEL_IMESSAGE_ALERTS: z.string().optional(),
+
   DASHBOARD_PORT: z.coerce.number().default(3200),
   DASHBOARD_SECRET: z.string().min(8),
 
@@ -92,6 +102,10 @@ export interface AppConfig {
   simpleclawRepoPath: string;
   /** vmc-bot token and target channel for VMC Daily Digest (optional) */
   vmcDigest: { botToken: string; channelId: string } | null;
+  /** Whether to poll iMessage (IMESSAGE_ENABLED=true). macOS only. */
+  imessageEnabled: boolean;
+  /** Channel for iMessage alerts (DISCORD_CHANNEL_IMESSAGE_ALERTS → DISCORD_CHANNEL_MAIL_ALERTS → general) */
+  imessageAlertChannelId: string;
   gmail: GmailAccount[];
   paths: {
     dataDir: string;
@@ -201,6 +215,11 @@ export function loadConfig(): AppConfig {
         ? { botToken: env.VMC_BOT_TOKEN, channelId: env.VMC_DIGEST_CHANNEL_ID }
         : null,
     gmail,
+    imessageEnabled: env.IMESSAGE_ENABLED,
+    imessageAlertChannelId:
+      env.DISCORD_CHANNEL_IMESSAGE_ALERTS ??
+      env.DISCORD_CHANNEL_MAIL_ALERTS ??
+      env.DISCORD_CHANNEL_GENERAL,
     paths: {
       dataDir: env.DATA_DIR,
       logsDir: env.LOGS_DIR,

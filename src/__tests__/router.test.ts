@@ -35,6 +35,8 @@ function makeConfig(): AppConfig {
       GMAIL_CLIENT_ID: '',
       GMAIL_CLIENT_SECRET: '',
       MAIL_POLL_INTERVAL_SEC: 600,
+      IMESSAGE_ENABLED: false,
+      IMESSAGE_POLL_INTERVAL_SEC: 60,
       DASHBOARD_PORT: 3200,
       DASHBOARD_SECRET: 'test-secret-xx',
       DATA_DIR: dataDir,
@@ -58,6 +60,8 @@ function makeConfig(): AppConfig {
     wikiDir: path.join(os.tmpdir(), 'coding-agent-wiki'),
     simpleclawRepoPath: '/tmp/repos/simpleclaw',
     vmcDigest: null,
+    imessageEnabled: false,
+    imessageAlertChannelId: GENERAL_CH,
     gmail: [],
     paths: {
       dataDir,

@@ -14,6 +14,7 @@ import { mountDashboard } from './dashboard/routes.js';
 import { GatewayIpc } from './ipc/server.js';
 import { DiscordGatewayAdapter } from './adapters/discord-gateway.js';
 import { GmailAdapter } from './adapters/gmail.js';
+import { IMessageAdapter } from './adapters/imessage.js';
 import { GitHubIssueAdapter } from './adapters/github.js';
 import { RepoSyncScheduler } from './scheduler/repo-sync.js';
 import { DreamingScheduler } from './scheduler/dreaming.js';
@@ -169,6 +170,14 @@ async function main(): Promise<void> {
     );
   }
 
+  // iMessage (optional — macOS only, requires IMESSAGE_ENABLED=true and Full Disk Access)
+  let imessage: IMessageAdapter | null = null;
+  if (config.imessageEnabled) {
+    imessage = new IMessageAdapter({ config, db, poster: discord });
+    await imessage.start();
+    log.info('imessage adapter started');
+  }
+
   // GitHub Issues (polls repos where watchIssues: true)
   const github = new GitHubIssueAdapter({ config, db, poster: discord });
   await github.start();
@@ -176,7 +185,7 @@ async function main(): Promise<void> {
   // Startup notification — visible in Discord so stale-gateway issues are immediately detectable
   const startupMsg = [
     `🔄 **gateway 재기동** | commit: \`${commitHash}\` | ${formatKst(startedAt)}`,
-    `📦 gmail: ${gmailCount}계정 | github: ${githubCount} repo`,
+    `📦 gmail: ${gmailCount}계정 | github: ${githubCount} repo${config.imessageEnabled ? ' | 💬 iMessage: on' : ''}`,
   ].join('\n');
   try {
     await discord.postToChannel(config.simpleclawChannelId ?? config.generalChannelId, startupMsg);
@@ -204,6 +213,7 @@ async function main(): Promise<void> {
       dailyDigest?.stop();
       await discord.stop();
       if (gmail) await gmail.stop();
+      if (imessage) await imessage.stop();
       github.stop();
       await ipc.stop();
       closeDb();
