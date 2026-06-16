@@ -39,7 +39,7 @@ interface IMessageAdapterOpts {
 }
 
 interface RawMessageRow {
-  rowid: number;
+  msg_rowid: number;
   text: string | null;
   date: number;         // Apple epoch nanoseconds
   handle_id: string;   // sender phone/email from handle.id
@@ -126,10 +126,18 @@ export class IMessageAdapter {
     let maxRowId = lastRowId;
     let processed = 0;
     let alerted = 0;
+    // chat_message_join can associate one message with multiple chats,
+    // causing the JOIN to return duplicate rows for the same msg_rowid.
+    const seenRowIds = new Set<number>();
 
     for (const row of rows) {
       if (this.stopped) break;
-      if (row.rowid > maxRowId) maxRowId = row.rowid;
+      const rowid = row.msg_rowid;
+      if (rowid > maxRowId) maxRowId = rowid;
+
+      // Skip JOIN-induced duplicates within the same cycle.
+      if (seenRowIds.has(rowid)) continue;
+      seenRowIds.add(rowid);
 
       const text = (row.text ?? '').trim();
       if (!text) continue; // 첨부파일만 있는 메시지 건너뜀
@@ -139,7 +147,7 @@ export class IMessageAdapter {
         processed++;
         if (r.alerted) alerted++;
       } catch (err) {
-        log.error({ err: (err as Error).message, rowid: row.rowid }, 'imessage: 메시지 처리 실패');
+        log.error({ err: (err as Error).message, rowid }, 'imessage: 메시지 처리 실패');
       }
     }
 
@@ -158,18 +166,20 @@ export class IMessageAdapter {
   }
 
   private fetchNewMessages(lastRowId: number): RawMessageRow[] {
+    // Explicit alias `msg_rowid` avoids ambiguity when better-sqlite3 resolves
+    // column names across JOINed tables that all expose their own `rowid`.
     const stmt = this.chatDb!.prepare<[number], RawMessageRow>(`
       SELECT
-        m.rowid,
+        m.rowid        AS msg_rowid,
         m.text,
         m.date,
-        COALESCE(h.id, '')         AS handle_id,
+        COALESCE(h.id, '')              AS handle_id,
         COALESCE(c.chat_identifier, '') AS chat_id,
         c.display_name
       FROM message m
-      LEFT JOIN handle h         ON h.rowid = m.handle_id
+      LEFT JOIN handle h              ON h.rowid = m.handle_id
       LEFT JOIN chat_message_join cmj ON cmj.message_id = m.rowid
-      LEFT JOIN chat c           ON c.rowid = cmj.chat_id
+      LEFT JOIN chat c                ON c.rowid = cmj.chat_id
       WHERE m.rowid > ?
         AND m.is_from_me = 0
       ORDER BY m.rowid ASC
@@ -189,7 +199,7 @@ export class IMessageAdapter {
 
     const mail: MailSummary = {
       account: IMESSAGE_ACCOUNT,
-      messageId: String(row.rowid),
+      messageId: String(row.msg_rowid),
       threadId: row.chat_id || sender,
       from: sender,
       fromEmail: sender,
@@ -207,7 +217,7 @@ export class IMessageAdapter {
         type: 'imessage.ignored',
         channel: ALERT_CHANNEL,
         summary: subject,
-        meta: { sender, rowid: row.rowid, reason: verdict.reason },
+        meta: { sender, rowid: row.msg_rowid, reason: verdict.reason },
       });
       return { alerted: false };
     }
@@ -229,17 +239,17 @@ export class IMessageAdapter {
         senderAccount: IMESSAGE_ACCOUNT,
       });
     } catch (err) {
-      log.error({ err: (err as Error).message, rowid: row.rowid }, 'imessage: Discord 포스팅 실패');
+      log.error({ err: (err as Error).message, rowid: row.msg_rowid }, 'imessage: Discord 포스팅 실패');
       logEvent(this.db, {
         type: 'imessage.error',
         channel: ALERT_CHANNEL,
         summary: `discord post failed: ${subject}`,
-        meta: { sender, rowid: row.rowid, error: (err as Error).message },
+        meta: { sender, rowid: row.msg_rowid, error: (err as Error).message },
       });
       return { alerted: false };
     }
 
-    const evtMeta = { sender, rowid: row.rowid, verdict: verdict.kind, isGroup };
+    const evtMeta = { sender, rowid: row.msg_rowid, verdict: verdict.kind, isGroup };
     logEvent(this.db, {
       type: 'imessage.alert',
       channel: ALERT_CHANNEL,
