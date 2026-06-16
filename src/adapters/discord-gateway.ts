@@ -253,9 +253,28 @@ export class DiscordGatewayAdapter implements MailAlertPoster {
     if (user.id !== this.config.env.DISCORD_OWNER_USER_ID) return;
 
     const emoji = reaction.emoji.name;
-    if (emoji !== '✅' && emoji !== '❌') return;
+    if (emoji !== '✅' && emoji !== '❌' && emoji !== '🌀') return;
 
     const msg = reaction.message.partial ? await reaction.message.fetch() : reaction.message;
+
+    if (emoji === '🌀') {
+      const ctx = this.buildContext(msg);
+      const isThread = msg.channel.isThread();
+      const isDm = msg.channel.isDMBased();
+      const threadKey = isDm || isThread ? msg.channel.id : msg.channelId;
+      log.info(
+        { channelId: msg.channelId, msgId: msg.id },
+        'gateway: 🌀 reaction — replaying missed message',
+      );
+      this.ipc.forwardEvent({
+        type: 'discord.message',
+        ctx,
+        threadKey,
+        msgId: msg.id,
+        channelId: msg.channelId,
+      });
+      return;
+    }
 
     this.ipc.forwardEvent({
       type: 'discord.reaction',
