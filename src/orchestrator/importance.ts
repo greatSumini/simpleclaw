@@ -51,7 +51,7 @@ export function shouldSkipByDomainPattern(email: string): boolean {
   // Rule: no-reply / noreply local-part prefix (e.g. no-reply@modusign.co.kr)
   if (localPart === 'no-reply' || localPart === 'noreply' || localPart.startsWith('no-reply.') || localPart.startsWith('noreply.') || localPart.endsWith('.noreply') || localPart.endsWith('.no-reply')) {
     // Exceptions: senders where even no-reply emails are actionable
-    const noReplyExceptions = ['github.com', 'cal.com'];
+    const noReplyExceptions = ['github.com', 'cal.com', 'mavrks.com']; // mavrks.com = 래피드(latpeed): 상품심사·정산 등 actionable
     if (!noReplyExceptions.includes(domain)) return true;
   }
 
