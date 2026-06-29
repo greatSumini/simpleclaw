@@ -225,6 +225,30 @@ function extractAttachments(
   return results;
 }
 
+/**
+ * Classify an error as transient/retryable (network, rate-limit, 5xx) vs permanent.
+ * Transient failures must NOT advance the Gmail historyId, otherwise the affected
+ * messages are silently skipped forever ("will retry next cycle" never happens).
+ */
+function isRetryableError(err: unknown): boolean {
+  const e = err as { code?: number | string; status?: number; message?: string };
+  const code = e.code ?? e.status;
+  if (typeof code === 'number' && (code === 429 || code >= 500)) return true;
+  const msg = (e.message ?? String(err)).toLowerCase();
+  return (
+    msg.includes('failed, reason') || // node fetch network failure (EADDRNOTAVAIL 등)
+    msg.includes('fetch failed') ||
+    msg.includes('timeout') ||
+    msg.includes('timed out') ||
+    msg.includes('econnreset') ||
+    msg.includes('econnrefused') ||
+    msg.includes('enotfound') ||
+    msg.includes('eaddrnotavail') ||
+    msg.includes('socket hang up') ||
+    msg.includes('network')
+  );
+}
+
 export class GmailAdapter {
   private readonly config: AppConfig;
   private readonly db: Database.Database;
@@ -446,6 +470,9 @@ export class GmailAdapter {
 
     let processed = 0;
     let alerted = 0;
+    // If any message hits a transient failure we must NOT advance historyId past
+    // it, so the next cycle re-fetches and genuinely retries it.
+    let heldBack = false;
 
     for (const id of addedIds) {
       if (this.stopped) break;
@@ -459,6 +486,8 @@ export class GmailAdapter {
         const r = await this.processMessage(rt, id);
         processed += 1;
         if (r.alerted) alerted += 1;
+        // Discord post failed transiently inside processMessage — hold back.
+        if (r.failed) heldBack = true;
       } catch (err) {
         const errMsg = (err as Error).message ?? '';
         // Gmail returns 404 "Requested entity was not found" when a message was
@@ -468,21 +497,37 @@ export class GmailAdapter {
           log.debug({ account: account.email, id }, 'gmail: message not found (deleted), skipping');
           continue;
         }
-        log.error(
-          { account: account.email, id, err: errMsg },
-          'gmail: failed to process message, will retry on next cycle',
-        );
+        const retryable = isRetryableError(err);
+        if (retryable) {
+          heldBack = true;
+          log.error(
+            { account: account.email, id, err: errMsg },
+            'gmail: transient failure processing message, holding back historyId for retry',
+          );
+        } else {
+          log.error(
+            { account: account.email, id, err: errMsg },
+            'gmail: permanent failure processing message, skipping (historyId will advance)',
+          );
+        }
         logEvent(this.db, {
           type: 'mail.error',
           channel: MAIL_ALERT_CHANNEL_NAME,
           summary: `process error: ${id}`,
-          meta: { account: account.email, gmailMsgId: id, error: errMsg },
+          meta: { account: account.email, gmailMsgId: id, error: errMsg, retryable },
         });
       }
     }
 
-    if (newHistoryId) {
+    // Only advance the historyId when nothing was held back. Idempotency
+    // (getMailThreadByGmailMsg) makes re-fetching already-handled messages safe.
+    if (newHistoryId && !heldBack) {
       setMailState(this.db, account.email, newHistoryId);
+    } else if (heldBack) {
+      log.warn(
+        { account: account.email, newHistoryId },
+        'gmail: held back historyId advance due to transient failures — will retry next cycle',
+      );
     }
 
     if (processed > 0 || alerted > 0) {
@@ -497,7 +542,7 @@ export class GmailAdapter {
   private async processMessage(
     rt: AccountRuntime,
     messageId: string,
-  ): Promise<{ alerted: boolean }> {
+  ): Promise<{ alerted: boolean; failed?: boolean }> {
     const { account, gmail } = rt;
 
     const detail = await gmail.users.messages.get({
@@ -628,7 +673,9 @@ export class GmailAdapter {
           error: (err as Error).message,
         },
       });
-      return { alerted: false };
+      // Transient post failure (network/5xx/429) → hold back historyId so the
+      // alert is retried; permanent failures (e.g. 400) advance to avoid a poison pill.
+      return { alerted: false, failed: isRetryableError(err) };
     }
 
     createMailThread(this.db, {

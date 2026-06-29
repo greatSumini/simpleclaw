@@ -183,18 +183,37 @@ function buildDigestMessage(items: DigestItem[], titleOverrides: Map<string, str
   return lines.join('\n');
 }
 
+/** Split content into Discord-safe chunks (≤2000 chars) on line boundaries. */
+function splitDiscordContent(text: string, max = 1990): string[] {
+  if (text.length <= max) return [text];
+  const chunks: string[] = [];
+  let rest = text;
+  while (rest.length > max) {
+    let cut = rest.lastIndexOf('\n', max);
+    if (cut <= 0) cut = max; // single overlong line — hard cut
+    chunks.push(rest.slice(0, cut));
+    rest = rest.slice(cut).replace(/^\n/, '');
+  }
+  if (rest.length > 0) chunks.push(rest);
+  return chunks;
+}
+
 async function postToDiscord(token: string, channelId: string, content: string): Promise<void> {
-  const res = await fetch(`${DISCORD_API}/channels/${channelId}/messages`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bot ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ content }),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Discord API error ${res.status}: ${text}`);
+  // Discord rejects messages over 2000 chars (400 Invalid Form Body) — chunk and
+  // send sequentially so long digests don't fail to post entirely.
+  for (const chunk of splitDiscordContent(content)) {
+    const res = await fetch(`${DISCORD_API}/channels/${channelId}/messages`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bot ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ content: chunk }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Discord API error ${res.status}: ${text}`);
+    }
   }
 }
 
@@ -234,7 +253,13 @@ export class DailyDigestScheduler {
       return { sent: 0 };
     }
 
-    // 전송 전에 먼저 마킹 — Discord 전송 후 재시작 시 중복 전송 방지
+    const titleOverrides = await rewriteTitlesForDigest(items, this.wikiDir);
+    const message = buildDigestMessage(items, titleOverrides);
+
+    // 전송 성공 후에만 마킹. (이전엔 전송 전 마킹 → 전송 실패 시 항목이
+    // digest_sent=true로 박제되어 영구 누락되는 버그가 있었음.)
+    // 트레이드오프: 전송 직후~마킹 사이 크래시 시 중복 전송 가능하나, 영구 누락보다 낫다.
+    await postToDiscord(this.vmcBotToken, this.vmcChannelId, message);
     for (const item of items) {
       try {
         markAsSent(item.filePath);
@@ -242,10 +267,6 @@ export class DailyDigestScheduler {
         log.warn({ err: (err as Error).message, file: item.filePath }, 'daily-digest: markAsSent failed');
       }
     }
-
-    const titleOverrides = await rewriteTitlesForDigest(items, this.wikiDir);
-    const message = buildDigestMessage(items, titleOverrides);
-    await postToDiscord(this.vmcBotToken, this.vmcChannelId, message);
 
     log.info({ count: items.length }, 'daily-digest: sent');
     return { sent: items.length };
