@@ -15,6 +15,7 @@ interface SkillEntry {
   name: string;
   description: string;
   content: string;
+  scope: 'internal' | 'shared';
 }
 
 /** @internal exported for testing */
@@ -53,7 +54,8 @@ export async function loadSkills(skillsDir: string): Promise<SkillEntry[]> {
       const raw = await readFile(skillMdPath, 'utf8');
       const { meta, body } = parseFrontmatter(raw);
       if (meta['name'] && meta['description']) {
-        skills.push({ name: meta['name'], description: meta['description'], content: body });
+        const scope = meta['scope'] === 'internal' ? 'internal' : 'shared';
+        skills.push({ name: meta['name'], description: meta['description'], content: body, scope });
       }
     } catch {
       // skip missing or malformed SKILL.md
@@ -88,6 +90,8 @@ export interface DetectSkillArgs {
   previousResponse?: string | null;
   cachedSkill?: string | null;
   skillsDir: string;
+  /** internal-scope skill 후보 포함 여부. SimpleClaw 자체 유지보수 세션에서만 true. */
+  allowInternal?: boolean;
 }
 
 export interface DetectSkillResult {
@@ -96,18 +100,21 @@ export interface DetectSkillResult {
 }
 
 export async function detectSkill(args: DetectSkillArgs): Promise<DetectSkillResult> {
-  const skills = await loadSkills(args.skillsDir);
+  const loaded = await loadSkills(args.skillsDir);
+  const skills = args.allowInternal ? loaded : loaded.filter((s) => s.scope !== 'internal');
   if (skills.length === 0) return { skill: null, content: null };
 
-  // 단문 확인어 + 기존 캐시 → 상속
+  // 단문 확인어 + 기존 캐시 → 상속 (internal skill은 non-internal 컨텍스트에 상속되지 않음)
   if (
     args.cachedSkill != null &&
     args.userMessage.length <= SHORT_CONFIRM_MAX_LEN &&
     !args.userMessage.includes('\n')
   ) {
     const found = skills.find((s) => s.name === args.cachedSkill);
-    log.debug({ cachedSkill: args.cachedSkill }, 'skill-detector: inherited cached skill');
-    return { skill: args.cachedSkill, content: found?.content ?? null };
+    if (found) {
+      log.debug({ cachedSkill: args.cachedSkill }, 'skill-detector: inherited cached skill');
+      return { skill: args.cachedSkill, content: found.content };
+    }
   }
 
   const prompt = buildDetectorPrompt(

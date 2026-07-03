@@ -624,6 +624,7 @@ export class DiscordAdapter implements MessengerAdapter {
       const skillsDir = path.join(this.config.simpleclawRepoPath, 'skills');
 
       // 첨부파일 다운로드 + skill 탐지 병렬 실행
+      // 외부 repo 채널이므로 internal-scope skill(simpleclaw-debug 등)은 후보에서 제외.
       const [savedPaths, skillResult] = await Promise.all([
         downloadAttachments(ctx.attachments ?? []),
         detectSkill({
@@ -929,6 +930,7 @@ export class DiscordAdapter implements MessengerAdapter {
       const skillsDir = path.join(cwd, 'skills');
 
       // 첨부파일 다운로드 + skill 탐지 병렬 실행
+      // SimpleClaw 자체 유지보수 세션이므로 internal-scope skill도 후보에 포함.
       const [savedPaths, skillResult] = await Promise.all([
         downloadAttachments(ctx.attachments ?? []),
         detectSkill({
@@ -936,6 +938,7 @@ export class DiscordAdapter implements MessengerAdapter {
           previousResponse: sessionRow?.lastResponse ?? null,
           cachedSkill: sessionRow?.lastSkill ?? null,
           skillsDir,
+          allowInternal: true,
         }),
       ]);
 

@@ -40,6 +40,7 @@ simpleclaw/
 ---
 name: skill-name
 description: 한 줄 설명 (Haiku 분류기가 skill 선택 시 사용)
+scope: internal | shared   # 생략 시 shared
 triggers:
   - 트리거 키워드/패턴 예시 1
   - 트리거 키워드/패턴 예시 2
@@ -47,6 +48,11 @@ triggers:
 
 # (skill 본문 — 메인 LLM systemAppend에 주입되는 실제 내용)
 ```
+
+**`scope` 필드 (신뢰 경계):**
+- `shared` (기본값): 모든 세션(외부 repo-work 스레드 포함)에서 감지 후보로 사용 가능.
+- `internal`: SimpleClaw 자체 유지보수 세션(`runSimpleClawMaintenanceInThread`)에서만 감지 후보로 사용됨. 외부 repo 채널의 `detectSkill()` 호출(`allowInternal` 미지정)에서는 후보에서 제외되어, Haiku 분류기 프롬프트에도 노출되지 않는다.
+- SimpleClaw 내부 아키텍처/버그 패턴/DB 스키마 등 외부 repo 세션에 노출되면 안 되는 지식(예: `simpleclaw-debug`)은 반드시 `scope: internal`로 작성할 것.
 
 ### SimpleClaw skill vs Repo skill 구분 원칙
 

@@ -32,13 +32,19 @@ function setMockFail(): void {
 // ---------------------------------------------------------------------------
 
 async function makeTempSkillsDir(
-  skills: Array<{ name: string; description: string; body: string }>,
+  skills: Array<{
+    name: string;
+    description: string;
+    body: string;
+    scope?: 'internal' | 'shared';
+  }>,
 ): Promise<string> {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'claw-test-skills-'));
   for (const skill of skills) {
     const skillDir = path.join(dir, skill.name);
     await mkdir(skillDir);
-    const md = `---\nname: ${skill.name}\ndescription: ${skill.description}\n---\n\n${skill.body}`;
+    const scopeLine = skill.scope ? `\nscope: ${skill.scope}` : '';
+    const md = `---\nname: ${skill.name}\ndescription: ${skill.description}${scopeLine}\n---\n\n${skill.body}`;
     await writeFile(path.join(skillDir, 'SKILL.md'), md, 'utf8');
   }
   return dir;
@@ -110,6 +116,31 @@ describe('loadSkills', () => {
       assert.equal(skills[0]!.name, 'b2b-email');
       assert.equal(skills[0]!.description, 'B2B 이메일 작성');
       assert.equal(skills[0]!.content, '# Email skill body');
+      assert.equal(skills[0]!.scope, 'shared');
+    } finally {
+      await rm(dir, { recursive: true });
+    }
+  });
+
+  test('scope: internal in frontmatter → parsed as internal', async () => {
+    const dir = await makeTempSkillsDir([
+      { name: 'simpleclaw-debug', description: '디버그', body: 'body', scope: 'internal' },
+    ]);
+    try {
+      const skills = await loadSkills(dir);
+      assert.equal(skills[0]!.scope, 'internal');
+    } finally {
+      await rm(dir, { recursive: true });
+    }
+  });
+
+  test('no scope in frontmatter → defaults to shared', async () => {
+    const dir = await makeTempSkillsDir([
+      { name: 'b2b-email', description: 'B2B 이메일', body: 'body' },
+    ]);
+    try {
+      const skills = await loadSkills(dir);
+      assert.equal(skills[0]!.scope, 'shared');
     } finally {
       await rm(dir, { recursive: true });
     }
@@ -355,6 +386,120 @@ describe('detectSkill: integration with mock claude', () => {
       });
       assert.equal(result.skill, 'claw-debug');
       assert.equal(result.content, '# Debug content');
+    } finally {
+      await rm(dir, { recursive: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// detectSkill — scope filtering (allowInternal)
+// ---------------------------------------------------------------------------
+
+describe('detectSkill: scope filtering', () => {
+  before(() => {
+    process.env.CLAUDE_BIN = MOCK_CLAUDE_PATH;
+    _resetCapabilitiesForTest();
+  });
+
+  after(() => {
+    if (ORIGINAL_CLAUDE_BIN !== undefined) {
+      process.env.CLAUDE_BIN = ORIGINAL_CLAUDE_BIN;
+    } else {
+      delete process.env.CLAUDE_BIN;
+    }
+    _resetCapabilitiesForTest();
+  });
+
+  test('only internal skill exists + allowInternal omitted → filtered out, no LLM call', async () => {
+    setMockFail(); // proves LLM is never invoked (would otherwise surface as failure, not null-from-filter)
+    const dir = await makeTempSkillsDir([
+      { name: 'simpleclaw-debug', description: '디버그', body: 'internal body', scope: 'internal' },
+    ]);
+    try {
+      const result = await detectSkill({
+        userMessage: '재시작 마커 관련 버그야',
+        skillsDir: dir,
+      });
+      assert.equal(result.skill, null);
+      assert.equal(result.content, null);
+    } finally {
+      await rm(dir, { recursive: true });
+      delete process.env.MOCK_CLAUDE_FAIL;
+    }
+  });
+
+  test('internal skill cached + allowInternal omitted (repo-work) → not inherited, falls through', async () => {
+    setMockFail();
+    const dir = await makeTempSkillsDir([
+      { name: 'simpleclaw-debug', description: '디버그', body: 'internal body', scope: 'internal' },
+      { name: 'b2b-email', description: 'B2B 이메일', body: 'shared body' },
+    ]);
+    try {
+      const result = await detectSkill({
+        userMessage: 'ㄱㄱ', // short-confirm shape
+        cachedSkill: 'simpleclaw-debug',
+        skillsDir: dir,
+      });
+      // Not inherited (filtered out) → falls through to LLM, which fails → null.
+      assert.equal(result.skill, null);
+    } finally {
+      await rm(dir, { recursive: true });
+      delete process.env.MOCK_CLAUDE_FAIL;
+    }
+  });
+
+  test('internal skill cached + allowInternal: true (simpleclaw maintenance) → inherited', async () => {
+    const dir = await makeTempSkillsDir([
+      { name: 'simpleclaw-debug', description: '디버그', body: 'internal body', scope: 'internal' },
+    ]);
+    try {
+      const result = await detectSkill({
+        userMessage: 'ㄱㄱ',
+        cachedSkill: 'simpleclaw-debug',
+        skillsDir: dir,
+        allowInternal: true,
+      });
+      assert.equal(result.skill, 'simpleclaw-debug');
+      assert.equal(result.content, 'internal body');
+    } finally {
+      await rm(dir, { recursive: true });
+    }
+  });
+
+  test('LLM candidate list excludes internal skills when allowInternal omitted', async () => {
+    // Mock returns the internal skill name anyway (simulating a leaked/hallucinated pick);
+    // it must be rejected because it was never in the filtered candidate list handed to the LLM.
+    setMockSkillResponse('simpleclaw-debug');
+    const dir = await makeTempSkillsDir([
+      { name: 'simpleclaw-debug', description: '디버그', body: 'internal body', scope: 'internal' },
+      { name: 'b2b-email', description: 'B2B 이메일', body: 'shared body' },
+    ]);
+    try {
+      const result = await detectSkill({
+        userMessage: '아무거나 물어봄',
+        skillsDir: dir,
+      });
+      assert.equal(result.skill, null);
+      assert.equal(result.content, null);
+    } finally {
+      await rm(dir, { recursive: true });
+    }
+  });
+
+  test('LLM candidate list includes internal skills when allowInternal: true', async () => {
+    setMockSkillResponse('simpleclaw-debug');
+    const dir = await makeTempSkillsDir([
+      { name: 'simpleclaw-debug', description: '디버그', body: 'internal body', scope: 'internal' },
+    ]);
+    try {
+      const result = await detectSkill({
+        userMessage: '재시작 루프 버그 확인해줘',
+        skillsDir: dir,
+        allowInternal: true,
+      });
+      assert.equal(result.skill, 'simpleclaw-debug');
+      assert.equal(result.content, 'internal body');
     } finally {
       await rm(dir, { recursive: true });
     }

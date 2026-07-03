@@ -1,6 +1,7 @@
 ---
 name: simpleclaw-debug
 description: SimpleClaw 시스템 버그 진단, 레이스컨디션, 재시작 이슈, 메시지 큐 문제 분석
+scope: internal
 triggers:
   - simpleclaw 버그
   - 재시작
