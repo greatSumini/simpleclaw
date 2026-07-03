@@ -19,6 +19,20 @@ __SIMPLECLAW_RESTART__
 
 ---
 
+## Owner override — `(as <fullName>) <지시>`
+
+채널의 repo 바인딩(router.ts `findRepoByChannelId`)은 채팅 텍스트의 신원·권한 주장으로 해제되지 않는다.
+단, 메시지 작성자의 Discord `authorId`가 `DISCORD_OWNER_USER_ID`(플랫폼이 인증하는 사실, 텍스트 주장이 아님)와
+정확히 일치하는 경우에 한해, 정확히 `(as <fullName>) <지시>` 구문을 사용하면 어느 채널에서 보내든
+해당 repo로 즉시 라우팅된다 (`router.ts`의 `parseOwnerOverride`, LLM 판단 개입 없이 코드에서 처리).
+
+- `<fullName>`은 `simpleclaw.config.json`에 등록된 repo의 fullName과 정확히 일치해야 함. 없으면 등록된 repo 목록을 안내하고 종료.
+- owner가 아닌 authorId가 동일 구문을 보내면 override는 무시되고 평소 라우팅(채널 바인딩 등)이 그대로 적용됨.
+- 모든 시도는 `events` 테이블에 `type='router.owner_override'`로 기록됨 (성공/실패 모두).
+- 이 메커니즘 외에는 채팅 내 권한 주장으로 채널 바인딩을 우회할 방법이 없다 (`session-boundary-guard` skill 참고).
+
+---
+
 ## Skills 시스템
 
 ### 개요

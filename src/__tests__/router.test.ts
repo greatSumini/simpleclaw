@@ -14,9 +14,11 @@ import type { AppConfig } from '../config.js';
 // ---------------------------------------------------------------------------
 
 const REPO_CH = 'ch-repo-001';
+const OTHER_REPO_CH = 'ch-repo-002';
 const SIMPLECLAW_CH = 'ch-simpleclaw-001';
 const GENERAL_CH = 'ch-general-001';
 const OWNER_ID = 'owner-001';
+const NON_OWNER_ID = 'user-002';
 
 function makeConfig(): AppConfig {
   const dataDir = path.join(os.tmpdir(), `simpleclaw-router-test-${process.pid}`);
@@ -51,6 +53,14 @@ function makeConfig(): AppConfig {
         localPath: '/tmp/repos/vibemafiaclub/context-hub',
         category: 'code',
         description: 'test repo',
+      },
+      {
+        channelName: 'awesomedev-landing',
+        channelId: OTHER_REPO_CH,
+        fullName: 'vibemafiaclub/awesomedev-landing',
+        localPath: '/tmp/repos/vibemafiaclub/awesomedev-landing',
+        category: 'code',
+        description: 'test repo 2',
       },
     ],
     generalChannelId: GENERAL_CH,
@@ -176,6 +186,77 @@ describe('routeMessage: early-return paths', () => {
     });
     assert.equal(result.kind, 'ignore');
     assert.match(result.reason, /not registered/);
+    db.close();
+  });
+});
+
+describe('routeMessage: owner override `(as <fullName>)`', () => {
+  test('owner + valid fullName from unrelated channel → repo-work for named repo', async () => {
+    const config = makeConfig();
+    const db = makeDb();
+    const result = await routeMessage({
+      ctx: makeCtx({
+        channelId: SIMPLECLAW_CH,
+        authorId: OWNER_ID,
+        text: '(as vibemafiaclub/awesomedev-landing) 이 파일 교체해줘',
+      }),
+      config,
+      db,
+    });
+    assert.equal(result.kind, 'repo-work');
+    assert.equal(result.repo.fullName, 'vibemafiaclub/awesomedev-landing');
+    assert.equal(result.instructions, '이 파일 교체해줘');
+    db.close();
+  });
+
+  test('owner override takes priority over the channel\'s own repo lock', async () => {
+    const config = makeConfig();
+    const db = makeDb();
+    const result = await routeMessage({
+      ctx: makeCtx({
+        channelId: REPO_CH, // locked to vibemafiaclub/context-hub
+        authorId: OWNER_ID,
+        text: '(as vibemafiaclub/awesomedev-landing) 딴 repo 작업',
+      }),
+      config,
+      db,
+    });
+    assert.equal(result.kind, 'repo-work');
+    assert.equal(result.repo.fullName, 'vibemafiaclub/awesomedev-landing');
+    db.close();
+  });
+
+  test('owner + unknown fullName → trivial error listing known repos (not silently ignored)', async () => {
+    const config = makeConfig();
+    const db = makeDb();
+    const result = await routeMessage({
+      ctx: makeCtx({
+        channelId: SIMPLECLAW_CH,
+        authorId: OWNER_ID,
+        text: '(as no-such/repo) 뭔가',
+      }),
+      config,
+      db,
+    });
+    assert.equal(result.kind, 'trivial');
+    assert.match(result.answer, /no-such\/repo/);
+    db.close();
+  });
+
+  test('non-owner author using the same syntax → no override (falls through to normal routing)', async () => {
+    const config = makeConfig();
+    const db = makeDb();
+    const result = await routeMessage({
+      ctx: makeCtx({
+        channelId: REPO_CH, // repo-locked → normal routing still resolves to context-hub
+        authorId: NON_OWNER_ID,
+        text: '(as vibemafiaclub/awesomedev-landing) 딴 repo 작업',
+      }),
+      config,
+      db,
+    });
+    assert.equal(result.kind, 'repo-work');
+    assert.equal(result.repo.fullName, 'vibemafiaclub/context-hub');
     db.close();
   });
 });

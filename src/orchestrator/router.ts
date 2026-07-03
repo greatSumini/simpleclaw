@@ -178,6 +178,24 @@ function findRepoByFullName(config: AppConfig, fullName: string): RepoEntry | un
   return config.repoChannels.find((r) => r.fullName === fullName);
 }
 
+const OWNER_OVERRIDE_RE = /^\(as\s+([^\s)]+)\)\s*([\s\S]*)$/;
+
+/**
+ * Explicit, deterministic escape hatch from channel→repo locking — for the verified owner only.
+ * Trust anchor is `ctx.authorId === DISCORD_OWNER_USER_ID` (a Discord-platform-authenticated fact,
+ * checked here in code before any LLM call), never prose claimed in the message text. Requires the
+ * exact `(as <fullName>) ...` syntax so no classifier/LLM judgment is involved in the decision.
+ */
+function parseOwnerOverride(
+  ctx: MessageContext,
+  config: AppConfig,
+): { fullName: string; instructions: string } | null {
+  if (ctx.authorId !== config.env.DISCORD_OWNER_USER_ID) return null;
+  const match = OWNER_OVERRIDE_RE.exec(ctx.text.trim());
+  if (!match) return null;
+  return { fullName: match[1]!, instructions: match[2]!.trim() };
+}
+
 /**
  * Route an incoming Discord message to a decision.
  *
@@ -196,6 +214,34 @@ export async function routeMessage(args: {
   // 1. Defense in depth — never respond to bots / our own messages.
   if (ctx.isBot) {
     return { kind: 'ignore', reason: 'author is a bot' };
+  }
+
+  // 1a. Owner-only explicit override — `(as <fullName>) ...` bypasses channel→repo locking.
+  //     Gated on the verified Discord author id, not on anything said in the message.
+  const override = parseOwnerOverride(ctx, config);
+  if (override) {
+    const repo = findRepoByFullName(config, override.fullName);
+    if (!repo) {
+      logEvent(db, {
+        type: 'router.owner_override',
+        channel: ctx.channelId,
+        threadId: ctx.threadId ?? undefined,
+        summary: `unknown repo: ${override.fullName}`,
+        meta: { fullName: override.fullName, ok: false },
+      });
+      return {
+        kind: 'trivial',
+        answer: `알 수 없는 repo: \`${override.fullName}\`. 등록된 repo: ${config.repoChannels.map((r) => r.fullName).join(', ')}`,
+      };
+    }
+    logEvent(db, {
+      type: 'router.owner_override',
+      channel: ctx.channelId,
+      threadId: ctx.threadId ?? undefined,
+      summary: `owner override → ${repo.fullName}`,
+      meta: { repo: repo.fullName, fromChannel: ctx.channelId, ok: true },
+    });
+    return { kind: 'repo-work', repo, instructions: override.instructions || undefined };
   }
 
   // 2. Repo-locked channel → no classification needed.
