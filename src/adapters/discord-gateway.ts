@@ -43,6 +43,7 @@ const SAFE_CHUNK_SIZE = 1900;
 const THREAD_NAME_MAX = 90;
 const DEFAULT_AUTO_ARCHIVE_MIN = 1440;
 const TYPING_REFRESH_MS = 9_000;
+const TYPING_MAX_LIFETIME_MS = 30 * 60_000;
 
 interface DiscordGatewayAdapterOpts {
   config: AppConfig;
@@ -503,38 +504,7 @@ export class DiscordGatewayAdapter implements MailAlertPoster {
       }
 
       case 'discord.typing.start': {
-        const { channelId } = req;
-        // Stop any existing typing loop for this channel
-        const existing = this.typingLoops.get(channelId);
-        if (existing) existing();
-
-        let cancelled = false;
-        let timer: NodeJS.Timeout | null = null;
-
-        const fire = (): void => {
-          if (cancelled) return;
-          void this.client.channels.fetch(channelId).then((ch) => {
-            if (cancelled || !ch || !('sendTyping' in ch)) return;
-            return (ch as { sendTyping: () => Promise<void> }).sendTyping();
-          }).catch((err) => {
-            log.debug({ err: (err as Error).message }, 'sendTyping failed');
-          });
-          if (cancelled) return;
-          timer = setTimeout(fire, TYPING_REFRESH_MS);
-          if (timer && typeof timer.unref === 'function') timer.unref();
-        };
-
-        const cleanup = (): void => {
-          cancelled = true;
-          if (timer) {
-            clearTimeout(timer);
-            timer = null;
-          }
-          this.typingLoops.delete(channelId);
-        };
-
-        this.typingLoops.set(channelId, cleanup);
-        fire();
+        this.startGatewayTyping(req.channelId);
         return;
       }
 
@@ -818,13 +788,48 @@ export class DiscordGatewayAdapter implements MailAlertPoster {
 
     let cancelled = false;
     let timer: NodeJS.Timeout | null = null;
+    let consecutiveFailures = 0;
+    const startedAt = Date.now();
+
+    const sendOnce = async (): Promise<void> => {
+      try {
+        const ch = await this.client.channels.fetch(channelId);
+        if (cancelled || !ch || !('sendTyping' in ch)) return;
+        await (ch as { sendTyping: () => Promise<void> }).sendTyping();
+        consecutiveFailures = 0;
+      } catch (err) {
+        // discord.js REST의 keep-alive 커넥션이 낡으면 Discord가 500을 반환하는 사례 관찰됨
+        // (2026-07-17: 같은 시점 fresh 커넥션은 204). fresh fetch로 폴백.
+        try {
+          const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/typing`, {
+            method: 'POST',
+            headers: { Authorization: `Bot ${this.config.env.DISCORD_BOT_TOKEN}` },
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          consecutiveFailures = 0;
+        } catch (fallbackErr) {
+          consecutiveFailures++;
+          const payload = {
+            channelId,
+            consecutiveFailures,
+            err: (err as Error).message,
+            fallbackErr: (fallbackErr as Error).message,
+          };
+          if (consecutiveFailures >= 3) log.warn(payload, 'sendTyping failed (fallback도 실패)');
+          else log.debug(payload, 'sendTyping failed');
+        }
+      }
+    };
 
     const fire = (): void => {
       if (cancelled) return;
-      void this.client.channels.fetch(channelId).then((ch) => {
-        if (cancelled || !ch || !('sendTyping' in ch)) return;
-        return (ch as { sendTyping: () => Promise<void> }).sendTyping();
-      }).catch(() => {});
+      if (Date.now() - startedAt > TYPING_MAX_LIFETIME_MS) {
+        // stop 신호 유실(워커 크래시 등) 시 무한 typing 방지
+        log.warn({ channelId }, 'typing loop exceeded max lifetime — auto-stopping');
+        cleanup();
+        return;
+      }
+      void sendOnce();
       if (cancelled) return;
       timer = setTimeout(fire, TYPING_REFRESH_MS);
       if (timer && typeof timer.unref === 'function') timer.unref();
