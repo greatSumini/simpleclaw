@@ -6,7 +6,11 @@
  * 동작:
  *   1. (--whitelist) 발신자를 sender_policies 에 whitelist 로 등록
  *      → 분류기가 다시 ignore 해도 important 로 승격됨 (importance.ts:330)
- *   2. 해당 계정의 mail_state.last_history_id 를 대상 메시지의 historyId 직전으로 되감음
+ *   2. 해당 계정의 mail_state.last_history_id 를, history.list 가 대상 메시지를
+ *      messageAdded 로 실제로 돌려주는 지점까지 되감음
+ *      (messages.get 의 historyId 는 "마지막으로 이 메시지에 영향을 준" id 라서
+ *       그 값-1 로 되감으면 messageAdded 가 안 나오는 경우가 있다 → 후보를 점점
+ *       넓혀가며 탐색)
  *      → 서버 재시작 시 정상 폴링 파이프라인이 재처리
  *   이미 알림된 메일은 mail_threads 멱등 체크(gmail.ts:480)로 스킵되므로 중복 게시 없음.
  *
@@ -74,7 +78,32 @@ async function main() {
     .get(ACCOUNT) as { last_history_id: string; last_polled_at: string } | undefined;
   const mapped = db.prepare('SELECT 1 FROM mail_threads WHERE gmail_msg_id = ?').get(MSG_ID);
 
-  const rewindTo = String(BigInt(historyId) - 1n);
+  // history.list 가 대상 메시지를 messageAdded 로 실제로 반환하는 지점을 탐색.
+  // 되감은 폭이 클수록 함께 재처리되는 메일이 늘어나므로 작은 폭부터 시도한다.
+  const OFFSETS = [1n, 50n, 200n, 500n, 1000n, 5000n, 20000n];
+  let rewindTo: string | null = null;
+  let alsoReplayed: string[] = [];
+  for (const off of OFFSETS) {
+    const candidate = BigInt(historyId) - off;
+    if (candidate <= 0n) continue;
+    const h = await gmail.users.history.list({
+      userId: 'me',
+      startHistoryId: String(candidate),
+      historyTypes: ['messageAdded'],
+    });
+    const added = (h.data.history ?? []).flatMap((x) =>
+      (x.messagesAdded ?? []).map((m) => m.message?.id).filter((v): v is string => !!v),
+    );
+    console.log(`  probe -${off}: ${String(candidate)} → added ${added.join(',') || '(none)'}`);
+    if (added.includes(MSG_ID)) {
+      rewindTo = String(candidate);
+      alsoReplayed = added.filter((id) => id !== MSG_ID);
+      break;
+    }
+  }
+  if (!rewindTo) {
+    throw new Error('history.list 에서 대상 메시지를 찾지 못했습니다 (되감기 폭 부족 또는 만료).');
+  }
 
   console.log(`계정        : ${ACCOUNT}`);
   console.log(`메시지      : ${MSG_ID}`);
@@ -84,6 +113,7 @@ async function main() {
   console.log(`msg history : ${historyId}`);
   console.log(`현재 커서   : ${state?.last_history_id} (last_polled ${state?.last_polled_at})`);
   console.log(`되감기 목표 : ${rewindTo}`);
+  console.log(`동반 재처리 : ${alsoReplayed.join(', ') || '(없음)'}`);
   console.log(`이미 알림됨 : ${mapped ? 'YES (재처리해도 스킵됨)' : 'no'}`);
   console.log(`whitelist   : ${WHITELIST ? `${fromEmail} → whitelist 등록` : '(안 함)'}`);
 
