@@ -17,8 +17,12 @@ const HOST = `http://127.0.0.1:${PORT}`;
 async function pickTarget() {
   const res = await fetch(`${HOST}/json/list`);
   const targets = await res.json();
+  const match = process.env.MESSAGES_CDP_MATCH;
   const page = targets.find(
-    (t) => t.type === 'page' && !t.url.startsWith('devtools://'),
+    (t) =>
+      t.type === 'page' &&
+      !t.url.startsWith('devtools://') &&
+      (!match || t.url.includes(match)),
   );
   if (!page) throw new Error('no page target found on CDP port ' + PORT);
   return page;
