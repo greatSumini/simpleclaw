@@ -111,6 +111,11 @@ export class WorkerIpc extends EventEmitter {
     this.rawSend({ type: 'discord.message.delete', channelId, msgId });
   }
 
+  async discordArchiveThread(channelId: string): Promise<void> {
+    const reqId = this.newId();
+    return this.request<void>({ type: 'discord.thread.archive', reqId, channelId });
+  }
+
   typingStart(channelId: string): void { this.rawSend({ type: 'discord.typing.start', channelId }); }
   typingStop(channelId: string): void { this.rawSend({ type: 'discord.typing.stop', channelId }); }
 

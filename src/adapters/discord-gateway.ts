@@ -489,6 +489,24 @@ export class DiscordGatewayAdapter implements MailAlertPoster {
         return;
       }
 
+      case 'discord.thread.archive': {
+        const { reqId, channelId } = req;
+        try {
+          const channel = await this.client.channels.fetch(channelId);
+          if (!channel || !channel.isThread()) {
+            this.ipc.sendToWorker({ type: 'ipc.err', reqId, error: `refusing to archive non-thread channel ${channelId}` });
+            return;
+          }
+          if (!channel.archived) {
+            await channel.setArchived(true);
+          }
+          this.ipc.sendToWorker({ type: 'ipc.ok', reqId });
+        } catch (err) {
+          this.ipc.sendToWorker({ type: 'ipc.err', reqId, error: (err as Error).message });
+        }
+        return;
+      }
+
       case 'discord.message.delete': {
         const { channelId, msgId } = req;
         try {

@@ -45,6 +45,7 @@ export type W2G =
   | { type: 'discord.send.components'; reqId: string; channelId: string; content: string; components: unknown[] }
   | { type: 'discord.thread.create'; reqId: string; channelId: string; msgId: string; name: string }
   | { type: 'discord.thread.delete'; reqId: string; channelId: string }
+  | { type: 'discord.thread.archive'; reqId: string; channelId: string }
   | { type: 'discord.message.delete'; channelId: string; msgId: string }
   | { type: 'discord.typing.start'; channelId: string }
   | { type: 'discord.typing.stop'; channelId: string }

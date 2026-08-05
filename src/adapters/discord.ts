@@ -408,6 +408,16 @@ export class DiscordAdapter implements MessengerAdapter {
             );
           }
         }
+      } else {
+        // ✅: keep the thread, just close (archive) it.
+        try {
+          await this.ipc.discordArchiveThread(mailThread.discordThreadId);
+        } catch (err) {
+          log.error(
+            { err: (err as Error).message, threadId: mailThread.discordThreadId },
+            'failed to archive mail alert thread',
+          );
+        }
       }
       return;
     }
