@@ -422,11 +422,29 @@ export class DiscordAdapter implements MessengerAdapter {
       return;
     }
 
-    // General (non-mail) thread: ❌ deletes the thread channel.
-    // 스레드가 아닌 일반 채널의 메시지에 달린 ❌는 무시 — 채널 자체가 삭제되는 사고 방지.
-    if (emoji !== '❌') return;
+    // General (non-mail) thread: ✅ archives (closes), ❌ deletes the thread channel.
+    // 스레드가 아닌 일반 채널의 메시지에 달린 리액션은 무시 — 채널 자체가 삭제/아카이브되는 사고 방지.
     if (!isThread) {
-      log.info({ channelId, msgId }, 'reaction ❌ on non-thread channel ignored');
+      log.info({ channelId, msgId, emoji }, 'reaction on non-thread channel ignored');
+      return;
+    }
+
+    if (emoji === '✅') {
+      try {
+        await this.ipc.discordArchiveThread(channelId);
+        log.info({ threadId: channelId }, 'general thread archived via ✅ reaction');
+        logEvent(this.db, {
+          type: 'thread.archived',
+          threadId: channelId,
+          summary: '✅ 리액션으로 스레드 닫기',
+          meta: { channelId },
+        });
+      } catch (err) {
+        log.error(
+          { err: (err as Error).message, channelId },
+          'failed to archive general thread',
+        );
+      }
       return;
     }
 
