@@ -277,14 +277,21 @@ export class DiscordGatewayAdapter implements MailAlertPoster {
       return;
     }
 
+    // 메시지 자체가 스레드 채널에 있는 경우뿐 아니라, 부모 채널의 "시작 메시지"에
+    // 리액션을 남긴 경우("메시지에서 스레드 만들기")도 그 메시지에 연결된 스레드를
+    // 대상으로 처리한다 — 그렇지 않으면 시작 메시지 리액션이 무시된다.
+    const isThreadChannel = msg.channel.isThread();
+    const attachedThreadId = !isThreadChannel && 'thread' in msg ? msg.thread?.id : undefined;
+    const targetChannelId = isThreadChannel ? msg.channelId : (attachedThreadId ?? msg.channelId);
+
     this.ipc.forwardEvent({
       type: 'discord.reaction',
       emoji: emoji ?? '',
       msgId: msg.id,
-      channelId: msg.channelId,
+      channelId: targetChannelId,
       userId: user.id,
       isOwner: true,
-      isThread: msg.channel.isThread(),
+      isThread: isThreadChannel || !!attachedThreadId,
     });
   }
 
