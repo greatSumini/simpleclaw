@@ -94,19 +94,6 @@ export function buildRepoWorkSystemAppend(args: RepoWorkPromptArgs): string {
   return lines.join('\n');
 }
 
-/**
- * Build the systemAppend block for a read-only auto-analysis run.
- * Explicitly forbids file edits, git operations, and any implementation work.
- */
-export function buildAnalysisSystemAppend(): string {
-  return [
-    '지시:',
-    '- 한국어로 응답',
-    '- 이 실행은 읽기 전용 분석 전용 — 파일 수정, git 작업, 코드 변경 절대 금지',
-    '- 최종 답변은 핵심만 간결히 (Discord에 그대로 전달됨, 2000자 이상 시 자동 분할됨)',
-  ].join('\n');
-}
-
 export interface SimpleClawMaintenancePromptArgs {
   isContinuation: boolean;
   /** Memories to inject before the 지시 block. */

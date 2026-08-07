@@ -18,7 +18,6 @@ import {
   buildRepoWorkSystemAppend,
   buildSimpleClawMaintenanceSystemAppend,
   buildWikiIngestSystemAppend,
-  buildAnalysisSystemAppend,
   SIMPLECLAW_RESTART_MARKER,
   detectPermanentRuleIntent,
   PERMANENT_RULE_NOTICE_INSTRUCTION,
@@ -28,27 +27,16 @@ import {
   saveMemory,
   extractKeywords,
   recordMemoryReferences,
-  updateMemoryScore,
   updateCandidateScore,
   markMemoriesReferenced,
-  getMemoriesForThread,
   channelScope,
   repoScope,
   GLOBAL_SCOPE,
 } from '../state/memories.js';
 import { loadRelevantMemoriesHybrid } from '../state/memories-hybrid.js';
 import { detectSkill, truncateForCache } from '../orchestrator/skill-detector.js';
-import {
-  buildConversationTranscript,
-  buildAnalysisPrompt,
-  parseSkillProposals,
-  stripSkillProposalsBlock,
-  parseMemoryScores,
-  stripMemoryScoresBlock,
-} from '../orchestrator/auto-analysis.js';
 import { extractAndSaveFacts } from '../orchestrator/fact-extractor.js';
 import {
-  insertSkillProposal,
   getSkillProposal,
   updateSkillProposalStatus,
   type SkillProposal,
@@ -65,11 +53,6 @@ import {
   getMailThreadByMessageId,
   setMailThreadStatus,
 } from '../state/mail.js';
-import {
-  upsertSessionAnalysis,
-  findEligibleSessionsForAnalysis,
-  type EligibleSession,
-} from '../state/session-analyses.js';
 import { WorkerIpc } from '../ipc/client.js';
 import type { G2WEvent, SerializedMessage } from '../ipc/types.js';
 
@@ -276,7 +259,6 @@ export class DiscordAdapter implements MessengerAdapter {
   private inFlightCount = 0;
   /** Set when a drain/restart has been requested. */
   private draining = false;
-  private analysisTimer: NodeJS.Timeout | null = null;
 
   constructor(opts: DiscordAdapterOpts) {
     if (!opts || !opts.config) throw new Error('DiscordAdapter: config required');
@@ -310,15 +292,10 @@ export class DiscordAdapter implements MessengerAdapter {
         });
       }
     });
-    this.startAnalysisPoller();
     this.ipc.ready();
   }
 
   async stop(): Promise<void> {
-    if (this.analysisTimer) {
-      clearInterval(this.analysisTimer);
-      this.analysisTimer = null;
-    }
     // ipc cleanup done by worker.ts
   }
 
@@ -1559,189 +1536,6 @@ export class DiscordAdapter implements MessengerAdapter {
         process.exit(0);
       }
     }
-  }
-
-  // -------------------------------------------------------------------------
-  // Auto-analysis poller
-  // -------------------------------------------------------------------------
-
-  private startAnalysisPoller(): void {
-    const INTERVAL_MS = 10 * 60 * 1_000; // 10 minutes
-    this.analysisTimer = setInterval(() => {
-      void this.runAnalysisCycle().catch((err) => {
-        log.error({ err: (err as Error).message }, 'analysis poller crashed');
-      });
-    }, INTERVAL_MS);
-    if (this.analysisTimer && typeof this.analysisTimer.unref === 'function') {
-      this.analysisTimer.unref();
-    }
-  }
-
-  private async runAnalysisCycle(): Promise<void> {
-    if (this.draining) return;
-
-    let eligible: EligibleSession[];
-    try {
-      eligible = findEligibleSessionsForAnalysis(this.db);
-    } catch (err) {
-      log.error({ err: (err as Error).message }, 'analysis: DB query failed');
-      return;
-    }
-
-    for (const session of eligible) {
-      if (this.draining) break;
-      try {
-        await this.analyzeSession(session);
-      } catch (err) {
-        log.error(
-          { err: (err as Error).message, threadId: session.threadId },
-          'analysis: session analysis failed',
-        );
-      }
-    }
-  }
-
-  private async analyzeSession(session: EligibleSession): Promise<void> {
-    const { threadId, userMsgCount, repo } = session;
-    const repoLabel = repo ?? 'unknown';
-    log.info({ threadId, userMsgCount, repo: repoLabel }, 'analysis: starting');
-
-    const transcript = buildConversationTranscript(this.db, threadId);
-    const injectedMemories = getMemoriesForThread(this.db, threadId);
-    const prompt = buildAnalysisPrompt(threadId, transcript, repoLabel, injectedMemories);
-    const systemAppend = buildAnalysisSystemAppend();
-
-    let result;
-    try {
-      result = await runClaude({
-        cwd: this.config.simpleclawRepoPath,
-        prompt,
-        systemAppend,
-        timeoutMs: CLAUDE_TIMEOUT_MS,
-      });
-    } catch (err) {
-      log.error({ err: (err as Error).message, threadId }, 'analysis: claude run failed');
-      return;
-    }
-
-    const { text: visibleText } = extractRestartMarker(result.text);
-
-    // Apply memory scores from analysis before stripping blocks.
-    const memoryScores = parseMemoryScores(visibleText);
-    for (const { id, layer, delta } of memoryScores) {
-      if (delta === 0) continue;
-      try {
-        if (layer === 'memory') {
-          updateMemoryScore(this.db, id, delta, threadId);
-        } else {
-          updateCandidateScore(this.db, id, delta, threadId);
-        }
-      } catch (err) {
-        log.warn({ err: (err as Error).message, id, layer, delta }, 'analysis: failed to apply memory score');
-      }
-    }
-    if (memoryScores.length > 0) {
-      log.info({ threadId, count: memoryScores.length }, 'analysis: memory scores applied');
-    }
-
-    // Parse skill proposals before stripping blocks from display text.
-    const proposals = parseSkillProposals(visibleText);
-    const displayText = stripSkillProposalsBlock(stripMemoryScoresBlock(visibleText));
-
-    const repoShort = repoLabel.split('/').pop() ?? repoLabel;
-    const dateStr = new Date().toISOString().slice(0, 10);
-
-    // 1. Post the full report to a new thread in the claw channel.
-    let analysisThreadId: string | null = null;
-    try {
-      const header = `**[자동 분석 리포트]** — \`${repoLabel}\` · 원본: <#${threadId}>\n\n`;
-      const chunks = splitMessage(header + displayText, SAFE_CHUNK_SIZE);
-      const simpleclawOrGeneral = this.config.simpleclawChannelId ?? this.config.generalChannelId;
-      const { messageId: firstMsgId } = await this.ipc.discordSend(simpleclawOrGeneral, chunks[0] ?? '');
-      if (firstMsgId) {
-        const threadName = truncate(`[분석] ${repoShort} · ${dateStr}`, THREAD_NAME_MAX);
-        const { threadId: newAnalysisThreadId } = await this.ipc.discordCreateThread(
-          simpleclawOrGeneral,
-          firstMsgId,
-          threadName,
-        );
-        analysisThreadId = newAnalysisThreadId;
-
-        for (const chunk of chunks.slice(1)) {
-          try {
-            await this.ipc.discordSend(analysisThreadId, chunk);
-          } catch (err) {
-            log.error({ err: (err as Error).message }, 'analysis: claw thread chunk send failed');
-          }
-        }
-
-        // Add skill proposal buttons if any were detected.
-        if (proposals.length > 0) {
-          try {
-            const buttons = proposals.map((p) => {
-              const id = insertSkillProposal(this.db, {
-                kind: p.kind,
-                name: p.name,
-                description: p.description,
-                content: p.content,
-                repoFullName: p.repoFullName,
-                sourceThreadId: threadId,
-              });
-              const emoji = p.kind === 'simpleclaw' ? '✨' : '📦';
-              const label = truncate(
-                `${emoji} ${p.kind === 'simpleclaw' ? 'SimpleClaw' : 'Repo'} skill: ${p.name}`,
-                80,
-              );
-              return {
-                type: 2,
-                style: 1,
-                label,
-                custom_id: buildCreateSkillButtonId(id),
-              };
-            });
-
-            // Discord limits 5 buttons per row; split into rows of 5.
-            const componentRows: object[] = [];
-            for (let i = 0; i < buttons.length; i += 5) {
-              componentRows.push({
-                type: 1,
-                components: buttons.slice(i, i + 5),
-              });
-            }
-
-            await this.ipc.discordSendComponents(
-              analysisThreadId,
-              'Skill 후보 — 클릭하면 자동 생성됩니다:',
-              componentRows,
-            );
-          } catch (err) {
-            log.error({ err: (err as Error).message }, 'analysis: failed to post skill proposal buttons');
-          }
-        }
-      }
-    } catch (err) {
-      log.error({ err: (err as Error).message }, 'analysis: failed to post to claw channel');
-    }
-
-    // 2. Notify the original thread with a link to the claw channel analysis thread.
-    try {
-      const notice = analysisThreadId
-        ? `**[자동 분석 리포트]** 작성 완료 → <#${analysisThreadId}>`
-        : `**[자동 분석 리포트]** 작성 완료 (claw 채널 확인)`;
-      await this.ipc.discordSend(threadId, notice);
-    } catch (err) {
-      log.warn({ err: (err as Error).message, threadId }, 'analysis: original thread notify failed');
-    }
-
-    upsertSessionAnalysis(this.db, {
-      sourceThreadId: threadId,
-      analysisSessionId: result.sessionId,
-      analyzedAt: new Date().toISOString(),
-      userMsgCount,
-      status: 'done',
-    });
-
-    log.info({ threadId, sessionId: result.sessionId, analysisThreadId }, 'analysis: posted to claw channel');
   }
 
   // -------------------------------------------------------------------------

@@ -218,13 +218,6 @@ Claude가 소스를 수정한 뒤 응답에 `__SIMPLECLAW_RESTART__` 마커를 �
 3. `launchctl kickstart -k gui/<uid>/com.simpleclaw`
 4. 재시작 중 수신된 메시지는 queue에 저장 후 재생
 
-### 자동 분석
-
-완료된 thread를 2시간마다 Haiku로 재분석:
-- **스킬 제안**: 반복 패턴 감지 → 대시보드에 pending 스킬 제안 생성
-- **메모리 점수 조정**: 유용했던 메모리 점수 상향, 무관한 메모리 하향
-- 대시보드에서 제안된 스킬 원클릭 승인 → `create-skill` Discord 버튼
-
 ### Gmail 통합
 
 - 복수 계정 주기 폴링 (기본 5분, `MAIL_POLL_INTERVAL_SEC`으로 조정)
@@ -317,7 +310,6 @@ src/
     router.ts             trivial/repo/unclear 분류기
     skill-detector.ts     SKILL.md 감지·선택·주입
     prompt.ts             systemAppend 빌더
-    auto-analysis.ts      스킬 제안·메모리 점수 업데이트
   state/
     db.ts                 SQLite 초기화
     sessions.ts           thread ↔ session 매핑
