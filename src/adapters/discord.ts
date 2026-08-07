@@ -677,6 +677,7 @@ export class DiscordAdapter implements MessengerAdapter {
         repo,
         isContinuation: Boolean(resumeId),
         memories: allMemories,
+        authorIsOwner: ctx.authorId === this.config.env.DISCORD_OWNER_USER_ID,
       });
       const builtSystemAppend = skillResult.content
         ? `# 활성 Skill: ${skillResult.skill}\n\n${skillResult.content}\n\n---\n${baseSystemAppend}`
@@ -988,6 +989,7 @@ export class DiscordAdapter implements MessengerAdapter {
       const baseSystemAppend = buildSimpleClawMaintenanceSystemAppend({
         isContinuation: Boolean(resumeId),
         memories: allMemoriesSimpleClaw,
+        authorIsOwner: ctx.authorId === this.config.env.DISCORD_OWNER_USER_ID,
       });
       const builtSystemAppend = skillResult.content
         ? `# 활성 Skill: ${skillResult.skill}\n\n${skillResult.content}\n\n---\n${baseSystemAppend}`
