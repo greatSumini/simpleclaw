@@ -33,6 +33,11 @@ export function formatMemoryBlock(memories: MemoryLike[]): string {
   return `# 저장된 컨텍스트\n${lines.join('\n')}\n\n---\n`;
 }
 
+export const NO_ASYNC_PROMISE_INSTRUCTION =
+  '이 세션은 완전히 동기적으로 실행되며, 응답을 보낸 후 백그라운드에서 계속 작업하거나 나중에 별도로 후속 메시지를 보낼 방법이 없다. ' +
+  '"다 되면 알려드릴게요", "완료되면 알려드릴게요" 같이 이번 응답 이후 추가 알림을 약속하는 표현을 절대 쓰지 말 것 — 지켜지지 않는다. ' +
+  '작업을 이번 턴 안에서 끝까지 완료한 뒤 결과를 보고하거나, 끝내지 못했다면 그 사실과 남은 작업을 지금 응답에 명시할 것.';
+
 export const ARTIFACT_INSTRUCTION =
   '파일(PDF, HTML 등)이나 URL을 산출물로 생성했을 경우 응답 끝에 다음 형식으로 표시 (SimpleClaw가 해당 파일/링크를 Discord에 직접 첨부):\n' +
   '  `__SIMPLECLAW_ARTIFACT__ {"kind":"file","path":"/절대경로","caption":"설명"}`\n' +
@@ -45,6 +50,7 @@ const BASE_LINES = [
   '최종 답변은 핵심만 간결히 (Discord에 그대로 전달됨, 2000자 이상 시 자동 분할됨). 단, 복수의 문의·건(B2B, 고객, 메일 등)을 보고할 때는 각 건마다 채널·수신 시각·연락처·문의 원문을 생략 없이 포함.',
   '디스커버리 콜·미팅 초대·인터뷰 등 일정을 잡는 이메일 발송 완료 후에는 반드시 "통화/미팅 시간 확정 시 캘린더 일정도 바로 만들어드릴 수 있습니다"를 안내.',
   '이메일 초안 제시 후에는 마지막 줄에 "발송할까요? (ㄱㄱ / 수정 요청)" 한 줄을 반드시 포함.',
+  NO_ASYNC_PROMISE_INSTRUCTION,
   ARTIFACT_INSTRUCTION,
 ];
 
@@ -211,6 +217,7 @@ export function buildSimpleClawMaintenanceSystemAppend(
   lines.push(
     '- 완료 메시지 끝에 재시작 여부를 반드시 명시: "재시작: 트리거됨" 또는 "재시작: 불필요 (문서/테스트만 변경)"',
   );
+  lines.push(`- ${NO_ASYNC_PROMISE_INSTRUCTION}`);
   lines.push(`- ${ARTIFACT_INSTRUCTION}`);
   if (args.isContinuation) {
     lines.push('- (이전 대화 이어가기 모드 — 같은 thread 안에서의 후속 메시지)');
