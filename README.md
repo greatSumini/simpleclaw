@@ -2,7 +2,7 @@
 
 > Discord/Gmail을 인터페이스로, `claude` CLI를 두뇌로 — macOS에서 24/7 돌아가는 개인 AI 에이전트 게이트웨이.
 
-메신저에 메시지를 보내면 SimpleClaw가 적절한 컨텍스트(스킬·메모리·레포)를 조립해 `claude --print`를 headless로 실행하고, 결과를 다시 채널로 돌려준다. 레포 코드 수정부터 이메일 초안까지 — 모두 채팅 하나로.
+메신저에 메시지를 보내면 SimpleClaw가 적절한 컨텍스트(스킬·레포)를 조립해 `claude --print`를 headless로 실행하고, 결과를 다시 채널로 돌려준다. 레포 코드 수정부터 이메일 초안까지 — 모두 채팅 하나로.
 
 ---
 
@@ -55,10 +55,6 @@ Setup Guide 문서: https://github.com/greatSumini/simpleclaw/blob/main/SETUP.md
           │  │ Detector  │  │
           │  └─────┬─────┘  │
           │        │        │
-          │  ┌─────▼─────┐  │
-          │  │  Memory   │  │  3-layer hybrid 검색
-          │  │  Loader   │  │
-          │  └─────┬─────┘  │
           └────────┼────────┘
                    │
         ┌──────────┴──────────┐
@@ -67,13 +63,12 @@ Setup Guide 문서: https://github.com/greatSumini/simpleclaw/blob/main/SETUP.md
    즉시 답변            spawn claude
                     --print --resume <id>
                     cwd = repo 디렉터리
-                    systemAppend = 스킬+메모리
+                    --append-system-prompt = 스킬+규칙
                          │
                          ▼
                   ┌─────────────┐
                   │   SQLite    │
                   │  sessions   │
-                  │  memories   │
                   │   events    │
                   └──────┬──────┘
                          │
@@ -85,10 +80,10 @@ Setup Guide 문서: https://github.com/greatSumini/simpleclaw/blob/main/SETUP.md
 
 1. **분류** — Haiku가 메시지를 보고 `trivial` / `repo` / `unclear` 중 하나로 분류
 2. **스킬 주입** — `simpleclaw/skills/` + 레포의 `.claude/skills/`에서 가장 관련된 SKILL.md를 찾아 `systemAppend`에 삽입
-3. **메모리 주입** — 관련 메모리를 hybrid 검색(BM25 + 임베딩)으로 가져와 함께 주입
-4. **Claude 실행** — `claude --print --resume <session_id>` headless 실행, 결과 수신
-5. **응답 전송** — Discord thread에 포스팅 (2000자 자동 분할, 파일 첨부 지원)
-6. **사후 분석** — 2시간마다 완료된 thread를 재분석해 스킬 제안·메모리 업데이트
+3. **Claude 실행** — `claude --print --resume <session_id>` headless 실행, 결과 수신
+4. **응답 전송** — Discord thread에 포스팅 (2000자 자동 분할, 파일 첨부 지원)
+
+주입되는 지침·스킬은 `--append-system-prompt`로 전달된다. 유저 턴에 인라인하면 세션 트랜스크립트에 남아 `--resume`마다 다시 과금되기 때문이다.
 
 ---
 
@@ -191,18 +186,6 @@ simpleclaw/skills/         ← 레포 무관 SimpleClaw 전역 스킬 (여기 �
 - 선택된 스킬의 본문이 Claude 실행 전 `systemAppend`에 주입됨
 - 세션 내 짧은 후속 메시지(<15자)는 직전 스킬 자동 재사용
 
-### 3-Layer 메모리 시스템
-
-| Layer | 저장소 | TTL | 설명 |
-|-------|--------|-----|------|
-| 1. Candidate | `memories_candidate` | 7일 | 단기 기억. `!기억` 단축어·자동 추출로 저장 |
-| 2. Active | `memories` | 영구 | 점수 0~1000+. 참조·분석으로 승격 |
-| 3. Embedding | `memories.embedding` | — | 온디바이스 HuggingFace 임베딩 |
-
-- **스코프**: `global` / `repo:{name}` / `channel:{id}` 3단계
-- **하이브리드 검색**: BM25 키워드 + 코사인 유사도 혼합 (60/20/20 가중치)
-- **Decay**: 밤 시간 DreamingScheduler가 오래된 메모리 점수 감소
-
 ### 세션 연속성
 
 - Discord thread ↔ Claude `session_id` 매핑 (SQLite)
@@ -261,8 +244,6 @@ git push
 | 테이블 | 용도 |
 |--------|------|
 | `sessions` | thread_id → claude session_id, 레포, 마지막 스킬 |
-| `memories` | 활성 메모리 (스코프, 태그, 점수, 임베딩) |
-| `memories_candidate` | 단기 후보 메모리 |
 | `events` | 전체 이벤트 감사 로그 (FTS5 전문검색) |
 | `skill_proposals` | 자동 감지된 스킬 제안 (pending/approved) |
 | `message_queue` | 재시작 중 수신 메시지 버퍼 |
@@ -273,7 +254,6 @@ git push
 htmx 기반 SSR 대시보드 (`:3200`, `DASHBOARD_SECRET` 인증):
 - 이벤트 뷰어 (FTS5 전문검색)
 - 세션 히스토리
-- 메모리 브라우저
 - 스킬 제안 큐 (승인/거절)
 
 ---
@@ -313,12 +293,9 @@ src/
   state/
     db.ts                 SQLite 초기화
     sessions.ts           thread ↔ session 매핑
-    memories.ts           Layer 2 메모리 CRUD
-    memories-hybrid.ts    BM25+임베딩 하이브리드 검색
     events.ts             감사 로그·FTS5 검색
   scheduler/
     repo-sync.ts          주기적 git pull
-    dreaming.ts           밤 시간 메모리 decay
   dashboard/
     routes.ts             /dashboard 엔드포인트 (htmx)
 skills/                   SimpleClaw 전역 스킬 (레포 무관)

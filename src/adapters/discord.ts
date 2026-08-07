@@ -22,20 +22,7 @@ import {
   detectPermanentRuleIntent,
   PERMANENT_RULE_NOTICE_INSTRUCTION,
 } from '../orchestrator/prompt.js';
-import {
-  loadCandidateContext,
-  saveMemory,
-  extractKeywords,
-  recordMemoryReferences,
-  updateCandidateScore,
-  markMemoriesReferenced,
-  channelScope,
-  repoScope,
-  GLOBAL_SCOPE,
-} from '../state/memories.js';
-import { loadRelevantMemoriesHybrid } from '../state/memories-hybrid.js';
 import { detectSkill, truncateForCache } from '../orchestrator/skill-detector.js';
-import { extractAndSaveFacts } from '../orchestrator/fact-extractor.js';
 import {
   getSkillProposal,
   updateSkillProposalStatus,
@@ -492,10 +479,13 @@ export class DiscordAdapter implements MessengerAdapter {
       return;
     }
 
-    // !기억 shortcut — save to memory Layer 1.
+    // !기억 — removed along with the memory pipeline. Reply instead of falling through to a
+    // repo session, which would silently treat the command as a work request.
     if (ctx.text.startsWith('!기억')) {
-      const value = ctx.text.slice('!기억'.length).trim();
-      await this.handleRememberCommand(value, ctx, channelId);
+      await this.safeSend(
+        channelId,
+        '`!기억`은 제거되었습니다 (메모리 파이프라인 폐지). 영구적으로 남길 내용은 skill 파일이나 repo의 CLAUDE.md에 저장해주세요.',
+      );
       return;
     }
 
@@ -643,17 +633,10 @@ export class DiscordAdapter implements MessengerAdapter {
       const baseText = ctx.text + attachmentNote(savedPaths);
       const userMessage = threadContext ? `${threadContext}\n\n${baseText}` : baseText;
 
-      // Load relevant memories for context injection (Layer 2 hybrid + top Layer 1 candidates).
-      const scopes = [channelScope(threadKey), repoScope(repo.fullName), GLOBAL_SCOPE];
-      const relevantMemories = await loadRelevantMemoriesHybrid(this.db, scopes, ctx.text);
-      const relevantCandidates = loadCandidateContext(this.db, scopes, ctx.text);
-      const allMemories = [...relevantMemories, ...relevantCandidates];
-
       const baseSystemAppend = buildRepoWorkSystemAppend({
         userMessage,
         repo,
         isContinuation: Boolean(resumeId),
-        memories: allMemories,
         authorIsOwner: ctx.authorId === this.config.env.DISCORD_OWNER_USER_ID,
       });
       const builtSystemAppend = skillResult.content
@@ -667,8 +650,8 @@ export class DiscordAdapter implements MessengerAdapter {
         type: 'claude.invoke',
         channel: channelLabel,
         threadId: threadKey,
-        summary: `repo=${repo.fullName} resume=${Boolean(resumeId)} memories=${allMemories.length}`,
-        meta: { repo: repo.fullName, resume: Boolean(resumeId), memoryCount: allMemories.length },
+        summary: `repo=${repo.fullName} resume=${Boolean(resumeId)}`,
+        meta: { repo: repo.fullName, resume: Boolean(resumeId) },
       });
       emitEvent({
         ts: new Date().toISOString(),
@@ -756,19 +739,11 @@ export class DiscordAdapter implements MessengerAdapter {
         costUsd: result.costUsd,
       });
 
-      // Post the response; capture last sent message ID for memory reference tracking.
       const chunks = splitMessage(result.text, SAFE_CHUNK_SIZE);
       if (chunks.length > 0) chunks[chunks.length - 1] += '\n' + usageFooter;
-      let lastSentMessageId: string | null = null;
       for (let i = 0; i < chunks.length; i++) {
-        const isLast = i === chunks.length - 1;
         try {
-          if (isLast && relevantMemories.length > 0) {
-            const sent = await this.safeSendWithId(target.channelId, chunks[i]);
-            if (sent) lastSentMessageId = sent.messageId ?? null;
-          } else {
-            await this.safeSend(target.channelId, chunks[i]);
-          }
+          await this.safeSend(target.channelId, chunks[i]);
         } catch (err) {
           log.error(
             { err: (err as Error).message, channel: channelLabel, threadId: threadKey },
@@ -780,28 +755,6 @@ export class DiscordAdapter implements MessengerAdapter {
 
       // Send artifact attachments/links after text.
       await this.sendArtifacts(target.channelId, result.artifacts);
-
-      // Track memory references for auto-analysis scoring later.
-      if (allMemories.length > 0 && lastSentMessageId) {
-        try {
-          markMemoriesReferenced(this.db, relevantMemories.map((m) => m.id));
-          // Boost Layer 1 candidates that were loaded as context — relevance is itself a quality signal.
-          for (const c of relevantCandidates) {
-            updateCandidateScore(this.db, c.id, 5, threadKey);
-          }
-          recordMemoryReferences(
-            this.db,
-            lastSentMessageId,
-            [
-              ...relevantMemories.map((m) => ({ id: m.id, layer: 'memory' as const })),
-              ...relevantCandidates.map((c) => ({ id: c.id, layer: 'candidate' as const })),
-            ],
-            threadKey,
-          );
-        } catch (err) {
-          log.error({ err: (err as Error).message }, 'failed to record memory references');
-        }
-      }
 
       // (btw) mode: restore session files to pre-run state so this exchange is ephemeral.
       if (isBtw && btwSnapshot) {
@@ -827,17 +780,6 @@ export class DiscordAdapter implements MessengerAdapter {
             'failed to upsert session',
           );
         }
-      }
-
-      // Fire-and-forget fact extraction (non-blocking, best-effort) — skip for (btw).
-      if (!isBtw) {
-        extractAndSaveFacts(
-          this.db,
-          this.config.simpleclawRepoPath,
-          repoScope(repo.fullName),
-          ctx.text,
-          result.text,
-        ).catch((err: Error) => log.debug({ err: err.message }, 'fact-extractor: skipped'));
       }
 
       // Result + outbound logs.
@@ -951,21 +893,8 @@ export class DiscordAdapter implements MessengerAdapter {
       const baseText = ctx.text + attachmentNote(savedPaths);
       const userMessage = threadContext ? `${threadContext}\n\n${baseText}` : baseText;
 
-      // Load relevant memories for context injection (simpleclaw scope, Layer 2 hybrid + top Layer 1).
-      // Backwards compat: also search legacy `greatSumini/claw` scope so memories saved before the rename are still found.
-      const simpleclawScopes = [
-        channelScope(threadKey),
-        repoScope('greatSumini/simpleclaw'),
-        repoScope('greatSumini/claw'),
-        GLOBAL_SCOPE,
-      ];
-      const relevantMemoriesSimpleClaw = await loadRelevantMemoriesHybrid(this.db, simpleclawScopes, ctx.text);
-      const relevantCandidatesSimpleClaw = loadCandidateContext(this.db, simpleclawScopes, ctx.text);
-      const allMemoriesSimpleClaw = [...relevantMemoriesSimpleClaw, ...relevantCandidatesSimpleClaw];
-
       const baseSystemAppend = buildSimpleClawMaintenanceSystemAppend({
         isContinuation: Boolean(resumeId),
-        memories: allMemoriesSimpleClaw,
         authorIsOwner: ctx.authorId === this.config.env.DISCORD_OWNER_USER_ID,
       });
       const builtSystemAppend = skillResult.content
@@ -1065,16 +994,9 @@ export class DiscordAdapter implements MessengerAdapter {
 
       const chunks = splitMessage(visibleText, SAFE_CHUNK_SIZE);
       if (chunks.length > 0) chunks[chunks.length - 1] += '\n' + clawUsageFooter;
-      let lastSentMsgIdSimpleClaw: string | null = null;
       for (let i = 0; i < chunks.length; i++) {
-        const isLast = i === chunks.length - 1;
         try {
-          if (isLast && relevantMemoriesSimpleClaw.length > 0) {
-            const sent = await this.safeSendWithId(target.channelId, chunks[i]);
-            if (sent) lastSentMsgIdSimpleClaw = sent.messageId ?? null;
-          } else {
-            await this.safeSend(target.channelId, chunks[i]);
-          }
+          await this.safeSend(target.channelId, chunks[i]);
         } catch (err) {
           log.error(
             { err: (err as Error).message, channel: channelLabel, threadId: threadKey },
@@ -1086,27 +1008,6 @@ export class DiscordAdapter implements MessengerAdapter {
 
       // Send artifact attachments/links after text.
       await this.sendArtifacts(target.channelId, result.artifacts);
-
-      // Track memory references for auto-analysis scoring later.
-      if (allMemoriesSimpleClaw.length > 0 && lastSentMsgIdSimpleClaw) {
-        try {
-          markMemoriesReferenced(this.db, relevantMemoriesSimpleClaw.map((m) => m.id));
-          for (const c of relevantCandidatesSimpleClaw) {
-            updateCandidateScore(this.db, c.id, 5, threadKey);
-          }
-          recordMemoryReferences(
-            this.db,
-            lastSentMsgIdSimpleClaw,
-            [
-              ...relevantMemoriesSimpleClaw.map((m) => ({ id: m.id, layer: 'memory' as const })),
-              ...relevantCandidatesSimpleClaw.map((c) => ({ id: c.id, layer: 'candidate' as const })),
-            ],
-            threadKey,
-          );
-        } catch (err) {
-          log.error({ err: (err as Error).message }, 'failed to record memory references (simpleclaw)');
-        }
-      }
 
       try {
         upsertSession(this.db, {
@@ -1359,33 +1260,6 @@ export class DiscordAdapter implements MessengerAdapter {
     // Otherwise runWithMutex finally block will call process.exit(0) when inFlightCount hits 0
   }
 
-  // -------------------------------------------------------------------------
-  // Memory commands
-  // -------------------------------------------------------------------------
-
-  private async handleRememberCommand(
-    value: string,
-    ctx: MessageContext,
-    channelId: string,
-  ): Promise<void> {
-    if (!value) {
-      await this.safeSend(channelId, '사용법: `!기억 <기억할 내용>`');
-      return;
-    }
-    try {
-      // 명시적 !기억 → Layer 2 직접 저장 (score 65, 즉시 주입 가능)
-      const scope = ctx.threadId ? channelScope(ctx.threadId) : GLOBAL_SCOPE;
-      const key = value.slice(0, 80);
-      const tags = extractKeywords(value);
-      saveMemory(this.db, { scope, key, value, tags, score: 65, source: 'explicit' });
-      await this.safeSend(channelId, `📝 기억했습니다 (Layer 2, 즉시 활성): \`${value.slice(0, 100)}\``);
-      log.info({ scope, key: key.slice(0, 40) }, 'memory saved to Layer 2 via !기억');
-    } catch (err) {
-      log.error({ err: (err as Error).message }, 'handleRememberCommand: failed');
-      await this.safeSend(channelId, '❌ 저장 실패: ' + (err as Error).message);
-    }
-  }
-
   // Skill creation (button handler)
   // -------------------------------------------------------------------------
 
@@ -1581,10 +1455,6 @@ export class DiscordAdapter implements MessengerAdapter {
 
   private async safeSend(channelId: string, content: string): Promise<void> {
     await this.ipc.discordSend(channelId, content);
-  }
-
-  private async safeSendWithId(channelId: string, content: string): Promise<{ messageId?: string }> {
-    return this.ipc.discordSend(channelId, content);
   }
 
   private async sendArtifacts(channelId: string, artifacts: Artifact[]): Promise<void> {

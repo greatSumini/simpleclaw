@@ -14,12 +14,6 @@ import {
   type MailStateRow,
   type SenderPolicyRow,
 } from '../state/mail.js';
-import {
-  listCandidates,
-  listMemories,
-  type Memory,
-  type MemoryCandidate,
-} from '../state/memories.js';
 import { subscribe, type BusEvent } from './event-bus.js';
 
 // ---------------------------------------------------------------------------
@@ -179,7 +173,7 @@ async function readUrlEncodedBody(req: Request): Promise<Record<string, string>>
 // HTML — layout & shared chrome
 // ---------------------------------------------------------------------------
 
-type Tab = 'overview' | 'sessions' | 'events' | 'mail' | 'memory';
+type Tab = 'overview' | 'sessions' | 'events' | 'mail';
 
 function navHtml(active: Tab): string {
   const items: Array<[Tab, string, string]> = [
@@ -187,7 +181,6 @@ function navHtml(active: Tab): string {
     ['sessions', '/dashboard/sessions', 'Sessions'],
     ['events', '/dashboard/events', 'Events'],
     ['mail', '/dashboard/mail', 'Mail'],
-    ['memory', '/dashboard/memory', 'Memory'],
   ];
   return `
     <nav class="claw-nav">
@@ -629,182 +622,6 @@ function renderMailPage(states: MailStateRow[], policies: SenderPolicyRow[], tod
 }
 
 // ---------------------------------------------------------------------------
-// Memory page
-// ---------------------------------------------------------------------------
-
-interface MemoryEventRow {
-  id: number;
-  memory_id: number | null;
-  layer: string;
-  event_type: string;
-  delta: number;
-  thread_id: string | null;
-  created_at: string;
-}
-
-interface MemoryPageData {
-  candidates: MemoryCandidate[];
-  activeMemories: Memory[];
-  archivedCount: number;
-  recentEvents: MemoryEventRow[];
-  sleepWindowHour: number | null;
-}
-
-function gatherMemoryData(db: Database.Database): MemoryPageData {
-  const candidates = listCandidates(db);
-  const activeMemories = listMemories(db, 'active');
-  const archivedCount = (
-    db.prepare<[], { c: number }>(`SELECT COUNT(*) AS c FROM memories WHERE status = 'archived'`).get()
-  )?.c ?? 0;
-
-  const recentEvents = db
-    .prepare<[], MemoryEventRow>(
-      `SELECT id, memory_id, layer, event_type, delta, thread_id, created_at
-       FROM memory_events ORDER BY created_at DESC LIMIT 50`,
-    )
-    .all();
-
-  // Detect sleep window (same logic as DreamingScheduler)
-  const since30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const hourRows = db
-    .prepare<[string], { hour: number; cnt: number }>(
-      `SELECT CAST(strftime('%H', ts) AS INTEGER) AS hour, COUNT(*) AS cnt
-       FROM events WHERE ts >= ? GROUP BY hour ORDER BY hour`,
-    )
-    .all(since30d);
-
-  let sleepWindowHour: number | null = null;
-  if (hourRows.length > 0) {
-    const hourCounts = new Array<number>(24).fill(0);
-    for (const r of hourRows) hourCounts[r.hour] = r.cnt;
-    let minSum = Infinity;
-    let minStart = 2;
-    for (let s = 0; s < 24; s++) {
-      const sum = [0, 1, 2, 3].reduce((acc, o) => acc + hourCounts[(s + o) % 24], 0);
-      if (sum < minSum) { minSum = sum; minStart = s; }
-    }
-    sleepWindowHour = minStart;
-  }
-
-  return { candidates, activeMemories, archivedCount, recentEvents, sleepWindowHour };
-}
-
-function renderMemoryPage(data: MemoryPageData): string {
-  const { candidates, activeMemories, archivedCount, recentEvents, sleepWindowHour } = data;
-
-  const sleepInfo = sleepWindowHour !== null
-    ? `${String(sleepWindowHour).padStart(2, '0')}:00 ~ ${String((sleepWindowHour + 4) % 24).padStart(2, '0')}:00 KST (30일 패턴 기반)`
-    : '데이터 부족 (기본값 02:00)';
-
-  // Stats
-  const statsHtml = `
-    <div class="claw-stats" style="margin-bottom: 1.5rem;">
-      <div class="claw-stat">
-        <div class="claw-stat-num">${candidates.length}</div>
-        <div class="claw-stat-label">Layer 1 후보</div>
-      </div>
-      <div class="claw-stat">
-        <div class="claw-stat-num">${activeMemories.length}</div>
-        <div class="claw-stat-label">Layer 2 활성</div>
-      </div>
-      <div class="claw-stat">
-        <div class="claw-stat-num">${archivedCount}</div>
-        <div class="claw-stat-label">보관됨</div>
-      </div>
-      <div class="claw-stat">
-        <div class="claw-stat-num">${recentEvents.length}</div>
-        <div class="claw-stat-label">최근 이벤트</div>
-      </div>
-    </div>`;
-
-  // Layer 2 active memories
-  const memoriesHtml = activeMemories.length === 0
-    ? `<p class="claw-empty">저장된 장기 기억 없음. <code>!기억 &lt;내용&gt;</code> 또는 드리밍 승격으로 생성됩니다.</p>`
-    : `<figure><table role="grid">
-        <thead><tr>
-          <th>scope</th><th>type</th><th>score</th><th>refs</th><th>value</th>
-          <th>tags</th><th>last_ref</th>
-        </tr></thead>
-        <tbody>
-          ${activeMemories.map((m) => `
-            <tr>
-              <td><span class="claw-mono" style="font-size:0.75rem;">${escapeHtml(m.scope)}</span></td>
-              <td><span class="claw-tag">${escapeHtml(m.type)}</span></td>
-              <td><strong>${m.score.toFixed(1)}</strong></td>
-              <td>${m.referenceCount}</td>
-              <td style="max-width:30ch;word-break:break-word;">${escapeHtml(m.value)}</td>
-              <td style="font-size:0.75rem;">${m.tags.map((t) => `<span class="claw-tag">${escapeHtml(t)}</span>`).join(' ')}</td>
-              <td style="font-size:0.8rem;">${escapeHtml(fmtTs(m.lastReferencedAt))}</td>
-            </tr>`).join('')}
-        </tbody>
-      </table></figure>`;
-
-  // Layer 1 candidates
-  const candidatesHtml = candidates.length === 0
-    ? `<p class="claw-empty">후보 없음. <code>!기억 &lt;내용&gt;</code>으로 추가하세요.</p>`
-    : `<figure><table role="grid">
-        <thead><tr>
-          <th>scope</th><th>score</th><th>value</th><th>expires_at</th><th>source</th>
-        </tr></thead>
-        <tbody>
-          ${candidates.map((c) => `
-            <tr>
-              <td><span class="claw-mono" style="font-size:0.75rem;">${escapeHtml(c.scope)}</span></td>
-              <td><strong>${c.score.toFixed(1)}</strong></td>
-              <td style="max-width:35ch;word-break:break-word;">${escapeHtml(c.value)}</td>
-              <td style="font-size:0.8rem;">${escapeHtml(fmtTs(c.expiresAt))}</td>
-              <td><span class="claw-tag">${escapeHtml(c.source)}</span></td>
-            </tr>`).join('')}
-        </tbody>
-      </table></figure>`;
-
-  // Recent memory events
-  const eventsHtml = recentEvents.length === 0
-    ? `<p class="claw-empty">이벤트 없음.</p>`
-    : `<figure><table role="grid">
-        <thead><tr>
-          <th>event_type</th><th>layer</th><th>delta</th><th>memory_id</th><th>thread</th><th>created_at</th>
-        </tr></thead>
-        <tbody>
-          ${recentEvents.map((e) => {
-            const deltaColor = e.delta > 0 ? 'color:var(--pico-color-green-500)' : e.delta < 0 ? 'color:var(--pico-color-red-500)' : '';
-            return `
-              <tr>
-                <td><span class="claw-tag">${escapeHtml(e.event_type)}</span></td>
-                <td>${escapeHtml(e.layer)}</td>
-                <td style="${deltaColor}">${e.delta > 0 ? '+' : ''}${e.delta.toFixed(1)}</td>
-                <td>${e.memory_id ?? '—'}</td>
-                <td><span class="claw-mono" style="font-size:0.75rem;">${e.thread_id ? escapeHtml(e.thread_id.slice(0, 12)) : '—'}</span></td>
-                <td style="font-size:0.8rem;">${escapeHtml(fmtTs(e.created_at))}</td>
-              </tr>`;
-          }).join('')}
-        </tbody>
-      </table></figure>`;
-
-  return `
-    <article>
-      <h3>시스템 상태</h3>
-      ${statsHtml}
-      <p style="font-size:0.85rem; color:var(--pico-muted-color);">
-        💭 드리밍 예상 시간대: <strong>${escapeHtml(sleepInfo)}</strong>
-        &nbsp;·&nbsp; score ≥ 70 → Layer 2 승격 &nbsp;·&nbsp; score &lt; 20 → 보관
-      </p>
-    </article>
-    <article>
-      <h3>Layer 2 — 장기 기억 (active: ${activeMemories.length}, archived: ${archivedCount})</h3>
-      ${memoriesHtml}
-    </article>
-    <article>
-      <h3>Layer 1 — 단기 후보 (${candidates.length}개, 7일 TTL)</h3>
-      ${candidatesHtml}
-    </article>
-    <article>
-      <h3>최근 메모리 이벤트</h3>
-      ${eventsHtml}
-    </article>`;
-}
-
-// ---------------------------------------------------------------------------
 // Mount
 // ---------------------------------------------------------------------------
 
@@ -999,23 +816,6 @@ export function mountDashboard(app: Express, opts: MountDashboardOpts): void {
       content: renderMailPage(states, policies, todayCounts, totalCounts),
     });
     res.status(200).type('html').send(html);
-  });
-
-  // ---- GET /dashboard/memory
-  app.get('/dashboard/memory', (_req, res) => {
-    const data = gatherMemoryData(db);
-    const html = layout({
-      title: 'Memory',
-      active: 'memory',
-      content: renderMemoryPage(data),
-    });
-    res.status(200).type('html').send(html);
-  });
-
-  // ---- GET /dashboard/api/memory
-  app.get('/dashboard/api/memory', (_req, res) => {
-    const data = gatherMemoryData(db);
-    res.status(200).json(data);
   });
 
   // ---- GET /dashboard/api/overview

@@ -323,6 +323,24 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_background_jobs_status ON background_jobs(status);
     `,
   },
+  {
+    // The memory pipeline (fact extraction → candidates → dreaming promotion → prompt injection)
+    // was removed: injection was its only consumer, and it cost a Haiku call per message plus an
+    // unbounded block re-sent on every turn. Migrations 007–009 stay in place as history; this
+    // drops what they created. Triggers must go before the tables they reference.
+    name: '018_drop_memory_system',
+    sql: `
+      DROP TRIGGER IF EXISTS memories_fts_ins;
+      DROP TRIGGER IF EXISTS memories_fts_upd;
+      DROP TRIGGER IF EXISTS memories_fts_del;
+      DROP TABLE IF EXISTS memories_fts;
+      DROP TABLE IF EXISTS memory_references;
+      DROP TABLE IF EXISTS memory_events;
+      DROP TABLE IF EXISTS memories;
+      DROP TABLE IF EXISTS candidate_edges;
+      DROP TABLE IF EXISTS memories_candidate;
+    `,
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

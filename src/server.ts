@@ -18,7 +18,6 @@ import { IMessageAdapter } from './adapters/imessage.js';
 import { GitHubIssueAdapter } from './adapters/github.js';
 import { RepoSyncScheduler } from './scheduler/repo-sync.js';
 import { BackgroundJobScheduler } from './scheduler/background-jobs.js';
-import { DreamingScheduler } from './scheduler/dreaming.js';
 import { WikiScanScheduler } from './scheduler/wiki-scan.js';
 import { DailyDigestScheduler } from './scheduler/daily-digest.js';
 
@@ -142,12 +141,6 @@ async function main(): Promise<void> {
   );
   backgroundJobs.start();
 
-  // Dreaming: memory decay/promote during sleep hours, once per day
-  const dreaming = new DreamingScheduler(db, (msg) =>
-    discord.postToChannel(simpleclawOrGeneral, msg),
-  );
-  dreaming.start();
-
   // Wiki scan: daily source briefing to claw-wiki channel (runs in Gateway to survive Worker restart)
   const wikiScan = new WikiScanScheduler(config, () => discord.triggerWikiScan());
   wikiScan.start();
@@ -216,7 +209,6 @@ async function main(): Promise<void> {
     try {
       server.close();
       repoSync.stop();
-      dreaming.stop();
       wikiScan.stop();
       dailyDigest?.stop();
       await discord.stop();
