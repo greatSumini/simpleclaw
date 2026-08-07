@@ -12,7 +12,10 @@ export interface ClaudeRunOptions {
   prompt: string;
   /** Session ID to resume. Omit for a fresh session. */
   resume?: string;
-  /** Additional system-style instructions. Will be appended after the prompt with a "---" separator. */
+  /**
+   * Additional system-style instructions. Passed via `--append-system-prompt` when the CLI
+   * supports it; otherwise appended after the prompt with a "---" separator.
+   */
   systemAppend?: string;
   /** Override model (e.g. 'claude-haiku-4-5-20251001'). Defaults to CLI's configured model. */
   model?: string;
@@ -127,8 +130,23 @@ function runHelp(): Promise<string> {
   });
 }
 
-function buildPrompt(prompt: string, systemAppend: string | undefined): string {
-  if (systemAppend && systemAppend.length > 0) {
+/**
+ * Build the stdin payload.
+ *
+ * When the CLI supports `--append-system-prompt`, systemAppend is passed as a real system
+ * prompt (see buildArgs) and the stdin payload is the bare user message. Only when that flag
+ * is unavailable do we fall back to inlining it into the user turn.
+ *
+ * The distinction matters for cost: content inlined into the user turn is persisted in the
+ * session transcript and re-sent on every subsequent `--resume`, so an N-turn thread pays for
+ * N copies of it. A system prompt is sent once, in the cache-stable prefix.
+ */
+export function buildPrompt(
+  prompt: string,
+  systemAppend: string | undefined,
+  caps: Pick<CliCapabilities, 'appendSystemPrompt'>,
+): string {
+  if (!caps.appendSystemPrompt && systemAppend && systemAppend.length > 0) {
     return `${prompt}\n\n---\n${systemAppend}`;
   }
   return prompt;
@@ -147,6 +165,9 @@ function buildArgs(opts: ClaudeRunOptions, caps: CliCapabilities): string[] {
   }
   if (opts.model) {
     args.push('--model', opts.model);
+  }
+  if (caps.appendSystemPrompt && opts.systemAppend && opts.systemAppend.length > 0) {
+    args.push('--append-system-prompt', opts.systemAppend);
   }
   return args;
 }
@@ -354,7 +375,7 @@ export function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
     const start = Date.now();
     const caps = await detectCapabilities();
     const args = buildArgs(opts, caps);
-    const stdinPayload = buildPrompt(opts.prompt, opts.systemAppend);
+    const stdinPayload = buildPrompt(opts.prompt, opts.systemAppend, caps);
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
     log.debug(

@@ -15,7 +15,7 @@
     "typecheck": "tsc --noEmit",
     "setup": "tsx scripts/setup.ts",
     "migrate": "tsx src/state/migrate.ts",
-    "test": "node --import tsx --test --test-reporter=spec src/__tests__/state.test.ts src/__tests__/discord-helpers.test.ts src/__tests__/gmail-helpers.test.ts src/__tests__/dashboard-helpers.test.ts src/__tests__/router.test.ts src/__tests__/messenger-adapter.test.ts src/__tests__/importance-prefilter.test.ts src/__tests__/skill-detector.test.ts src/__tests__/tmux-runner.test.ts"
+    "test": "node --import tsx --test --test-reporter=spec src/__tests__/state.test.ts src/__tests__/discord-helpers.test.ts src/__tests__/gmail-helpers.test.ts src/__tests__/dashboard-helpers.test.ts src/__tests__/router.test.ts src/__tests__/messenger-adapter.test.ts src/__tests__/importance-prefilter.test.ts src/__tests__/skill-detector.test.ts src/__tests__/tmux-runner.test.ts src/__tests__/claude-prompt.test.ts"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
