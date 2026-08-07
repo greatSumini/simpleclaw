@@ -305,6 +305,24 @@ const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    name: '017_background_jobs',
+    sql: `
+      CREATE TABLE IF NOT EXISTS background_jobs (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        thread_id       TEXT NOT NULL,
+        description     TEXT NOT NULL,
+        check_cmd       TEXT NOT NULL,
+        cwd             TEXT NOT NULL,
+        done_message    TEXT NOT NULL,
+        status          TEXT NOT NULL DEFAULT 'pending',
+        created_at      TEXT NOT NULL,
+        checked_at      TEXT,
+        expires_at      TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_background_jobs_status ON background_jobs(status);
+    `,
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

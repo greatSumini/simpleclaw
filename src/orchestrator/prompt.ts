@@ -34,9 +34,15 @@ export function formatMemoryBlock(memories: MemoryLike[]): string {
 }
 
 export const NO_ASYNC_PROMISE_INSTRUCTION =
-  '이 세션은 완전히 동기적으로 실행되며, 응답을 보낸 후 백그라운드에서 계속 작업하거나 나중에 별도로 후속 메시지를 보낼 방법이 없다. ' +
-  '"다 되면 알려드릴게요", "완료되면 알려드릴게요" 같이 이번 응답 이후 추가 알림을 약속하는 표현을 절대 쓰지 말 것 — 지켜지지 않는다. ' +
-  '작업을 이번 턴 안에서 끝까지 완료한 뒤 결과를 보고하거나, 끝내지 못했다면 그 사실과 남은 작업을 지금 응답에 명시할 것.';
+  '이 세션은 완전히 동기적으로 실행되며, 응답을 보낸 후 이 프로세스 자체가 백그라운드에서 계속 작업할 방법은 없다. ' +
+  '"다 되면 알려드릴게요"처럼 막연히 약속하지 말 것 — 완료 조건이 셸 명령 하나로 참/거짓 판정 가능한 객관적 조건(빌드 성공, PR merged, HTTP 200 등)일 때만 ' +
+  '아래 background_jobs 등록으로 실제 후속 알림을 걸 수 있다. 그 외의 경우(사람의 판단이 필요한 완료 조건)는 이번 턴 안에서 끝까지 마치고 보고하거나, ' +
+  '못 끝냈으면 그 사실과 남은 작업을 지금 응답에 명시할 것.\n' +
+  '  후속 알림이 필요하고 완료 조건이 객관적으로 체크 가능하면, 이 턴 안에서 다음처럼 등록하라 (폴링은 5분 간격, 등록만 하면 SimpleClaw가 알아서 감지·통보한다):\n' +
+  '  `sqlite3 data/simpleclaw.db "INSERT INTO background_jobs (thread_id, description, check_cmd, cwd, done_message, created_at, expires_at) ' +
+  'VALUES (\'<이 스레드 ID>\', \'<한 줄 설명>\', \'<exit 0 이면 완료로 판정되는 셸 명령>\', \'<명령 실행 cwd 절대경로>\', \'<완료 시 스레드에 보낼 메시지>\', ' +
+  "datetime('now'), datetime('now', '+<N> hours'))\"`\n" +
+  '  등록 후 응답에는 "완료되면 알려드릴게요" 대신 "완료 조건을 등록했습니다 — 충족되면 자동으로 알려드립니다" 같이 실제로 지켜지는 표현만 쓸 것.';
 
 export const ARTIFACT_INSTRUCTION =
   '파일(PDF, HTML 등)이나 URL을 산출물로 생성했을 경우 응답 끝에 다음 형식으로 표시 (SimpleClaw가 해당 파일/링크를 Discord에 직접 첨부):\n' +

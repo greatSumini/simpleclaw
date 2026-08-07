@@ -17,6 +17,7 @@ import { GmailAdapter } from './adapters/gmail.js';
 import { IMessageAdapter } from './adapters/imessage.js';
 import { GitHubIssueAdapter } from './adapters/github.js';
 import { RepoSyncScheduler } from './scheduler/repo-sync.js';
+import { BackgroundJobScheduler } from './scheduler/background-jobs.js';
 import { DreamingScheduler } from './scheduler/dreaming.js';
 import { WikiScanScheduler } from './scheduler/wiki-scan.js';
 import { DailyDigestScheduler } from './scheduler/daily-digest.js';
@@ -133,6 +134,13 @@ async function main(): Promise<void> {
     discord.postToChannel(simpleclawOrGeneral, msg),
   );
   repoSync.start();
+
+  // Background jobs: polls objectively-checkable completion conditions Claude
+  // registers mid-session, notifies the originating thread once done (no LLM call in the loop).
+  const backgroundJobs = new BackgroundJobScheduler(db, (threadId, msg) =>
+    discord.postToChannel(threadId, msg),
+  );
+  backgroundJobs.start();
 
   // Dreaming: memory decay/promote during sleep hours, once per day
   const dreaming = new DreamingScheduler(db, (msg) =>
