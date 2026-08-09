@@ -161,6 +161,36 @@ export function buildWikiScanSystemAppend(sourcesPath: string): string {
   ].join('\n');
 }
 
+export interface RootPromptArgs {
+  isContinuation: boolean;
+}
+
+/**
+ * Build the systemAppend block for a root-channel run.
+ *
+ * - cwd는 홈 디렉토리($HOME). 특정 repo에 종속되지 않음 — 머신 전체에서 임의 작업 수행.
+ * - 이 채널은 authorId === DISCORD_OWNER_USER_ID로 라우터 단계에서 이미 검증됨 (router.ts) —
+ *   호출부는 항상 owner. formatAuthorLine을 별도로 붙이지 않는 이유.
+ */
+export function buildRootSystemAppend(args: RootPromptArgs): string {
+  const lines: string[] = [];
+  lines.push('지시:');
+  lines.push('- 한국어로 응답');
+  lines.push(
+    '- 이 세션은 root 채널 — 특정 repo에 종속되지 않는 머신 전역 작업용. cwd는 홈 디렉토리($HOME). 어떤 파일/디렉토리든 작업 가능.',
+  );
+  lines.push(
+    '- 이 채널 접근은 라우터 단계에서 이미 검증된 owner 전용 (Discord authorId 기반). 별도 신원 확인 불필요.',
+  );
+  lines.push('- 최종 답변은 핵심만 간결히 (Discord에 그대로 전달됨, 2000자 이상 시 자동 분할됨)');
+  lines.push(`- ${NO_ASYNC_PROMISE_INSTRUCTION}`);
+  lines.push(`- ${ARTIFACT_INSTRUCTION}`);
+  if (args.isContinuation) {
+    lines.push('- (이전 대화 이어가기 모드 — 같은 thread 안에서의 후속 메시지)');
+  }
+  return lines.join('\n');
+}
+
 /**
  * Build the systemAppend block for a SimpleClaw self-maintenance run.
  *

@@ -22,6 +22,8 @@ const Schema = z.object({
   DISCORD_CHANNEL_MAIL_ALERTS: z.string().optional(),
   /** Optional — wiki ingest channel (simpleclaw-wiki). If absent, wiki-ingest is disabled. */
   DISCORD_CHANNEL_WIKI: z.string().optional(),
+  /** Optional — root channel. No repo binding; spawns Claude Code at $HOME with full access, owner-only. */
+  DISCORD_CHANNEL_ROOT: z.string().optional(),
   /** Absolute path to the LLM wiki directory. Defaults to ~/coding-agent-wiki */
   WIKI_DIR: z.string().default(path.resolve(os.homedir(), 'coding-agent-wiki')),
   DISCORD_OWNER_USER_ID: z.string().min(1),
@@ -96,6 +98,12 @@ export interface AppConfig {
   simpleclawChannelId: string | undefined;
   /** Channel for wiki ingest (simpleclaw-wiki). Undefined if DISCORD_CHANNEL_WIKI not set. */
   wikiChannelId: string | undefined;
+  /**
+   * Root channel — no repo binding, spawns Claude Code at $HOME with full access.
+   * Gated to DISCORD_OWNER_USER_ID at the router level (never inferred from message text).
+   * Undefined if DISCORD_CHANNEL_ROOT not set.
+   */
+  rootChannelId: string | undefined;
   /** Absolute path to the LLM wiki directory */
   wikiDir: string;
   /** Absolute path to this SimpleClaw repository — derived from process.cwd() at startup */
@@ -208,6 +216,7 @@ export function loadConfig(): AppConfig {
     mailAlertChannelId: env.DISCORD_CHANNEL_MAIL_ALERTS ?? env.DISCORD_CHANNEL_GENERAL,
     simpleclawChannelId,
     wikiChannelId: env.DISCORD_CHANNEL_WIKI,
+    rootChannelId: env.DISCORD_CHANNEL_ROOT,
     wikiDir: env.WIKI_DIR,
     simpleclawRepoPath: process.cwd(),
     vmcDigest:

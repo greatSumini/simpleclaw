@@ -244,6 +244,31 @@ export async function routeMessage(args: {
     return { kind: 'repo-work', repo, instructions: override.instructions || undefined };
   }
 
+  // 1b. Root channel — no repo binding, spawns Claude Code at $HOME with full access.
+  //     Gated on the verified Discord author id (same trust anchor as the owner override),
+  //     never on message text. Non-owner messages in this channel are silently ignored — the
+  //     channel's purpose is not exposed to other authors.
+  if (config.rootChannelId && ctx.channelId === config.rootChannelId) {
+    if (ctx.authorId !== config.env.DISCORD_OWNER_USER_ID) {
+      logEvent(db, {
+        type: 'router.root_channel',
+        channel: ctx.channelId,
+        threadId: ctx.threadId ?? undefined,
+        summary: 'root channel message from non-owner — ignored',
+        meta: { ok: false },
+      });
+      return { kind: 'ignore', reason: 'root channel requires owner' };
+    }
+    logEvent(db, {
+      type: 'router.root_channel',
+      channel: ctx.channelId,
+      threadId: ctx.threadId ?? undefined,
+      summary: 'root channel (channel-locked)',
+      meta: { mode: 'channel-locked', ok: true },
+    });
+    return { kind: 'root' };
+  }
+
   // 2. Repo-locked channel → no classification needed.
   const repoLocked = findRepoByChannelId(config, ctx.channelId);
   if (repoLocked) {

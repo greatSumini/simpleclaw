@@ -67,6 +67,7 @@ function makeConfig(): AppConfig {
     mailAlertChannelId: REPO_CH,
     simpleclawChannelId: SIMPLECLAW_CH,
     wikiChannelId: undefined,
+    rootChannelId: undefined,
     wikiDir: path.join(os.tmpdir(), 'coding-agent-wiki'),
     simpleclawRepoPath: '/tmp/repos/simpleclaw',
     vmcDigest: null,

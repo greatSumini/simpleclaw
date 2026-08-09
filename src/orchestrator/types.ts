@@ -10,6 +10,7 @@ export type RouteDecision =
   | { kind: 'repo-work'; repo: RepoEntry; instructions?: string }
   | { kind: 'simpleclaw-maintenance'; instructions?: string }
   | { kind: 'wiki-ingest' }
+  | { kind: 'root' }
   | { kind: 'ignore'; reason: string };
 
 export interface MailAttachment {

@@ -2,6 +2,7 @@ import { spawn, execFile } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import path from 'node:path';
+import os from 'node:os';
 import type Database from 'better-sqlite3';
 
 import type { AppConfig, RepoEntry } from '../config.js';
@@ -18,6 +19,7 @@ import {
   buildRepoWorkSystemAppend,
   buildSimpleClawMaintenanceSystemAppend,
   buildWikiIngestSystemAppend,
+  buildRootSystemAppend,
   SIMPLECLAW_RESTART_MARKER,
   detectPermanentRuleIntent,
   PERMANENT_RULE_NOTICE_INSTRUCTION,
@@ -537,6 +539,9 @@ export class DiscordAdapter implements MessengerAdapter {
         return;
       case 'wiki-ingest':
         await this.handleWikiIngest(ctx, threadKey, msgId, channelId);
+        return;
+      case 'root':
+        await this.handleRoot(ctx, threadKey, msgId, channelId);
         return;
       default: {
         // Exhaustiveness guard.
@@ -1237,6 +1242,219 @@ export class DiscordAdapter implements MessengerAdapter {
         channel: channelLabel,
         threadId: threadKey,
         summary: `${result.durationMs}ms ${result.text.length}chars`,
+      });
+    } finally {
+      stopTyping();
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Root channel flow — no repo binding, $HOME cwd, owner-only (gated in router.ts)
+  // -------------------------------------------------------------------------
+
+  private async handleRoot(
+    ctx: MessageContext,
+    threadKey: string,
+    msgId: string,
+    channelId: string,
+  ): Promise<void> {
+    const isThread = ctx.threadId !== null;
+
+    let target: TargetChannel;
+    try {
+      if (isThread) {
+        target = { channelId, threadKey };
+      } else {
+        const title = makeThreadTitle(ctx.text || 'root');
+        const { threadId: newThreadId } = await this.ipc.discordCreateThread(
+          channelId,
+          msgId,
+          truncate(title, THREAD_NAME_MAX),
+        );
+        target = { channelId: newThreadId, threadKey: newThreadId };
+        threadKey = newThreadId;
+      }
+    } catch (err) {
+      log.error(
+        { err: (err as Error).message, channel: ctx.channelName ?? ctx.channelId },
+        'failed to resolve discord target / open thread (root)',
+      );
+      return;
+    }
+
+    const existingSession = getSession(this.db, threadKey);
+    const threadContext =
+      isThread && !existingSession ? await this.fetchThreadContext(channelId, msgId) : undefined;
+
+    await this.runWithMutex(threadKey, () =>
+      this.runRootInThread(ctx, target, threadKey, threadContext),
+    );
+  }
+
+  private async runRootInThread(
+    ctx: MessageContext,
+    target: TargetChannel,
+    threadKey: string,
+    threadContext?: string,
+  ): Promise<void> {
+    const channelLabel = ctx.channelName ?? ctx.channelId;
+    const cwd = os.homedir();
+
+    const sessionRow = getSession(this.db, threadKey);
+    const resumeId = sessionRow?.claudeSessionId;
+
+    const stopTyping = this.startTyping(target.channelId);
+
+    try {
+      const skillsDir = path.join(this.config.simpleclawRepoPath, 'skills');
+
+      const [savedPaths, skillResult] = await Promise.all([
+        downloadAttachments(ctx.attachments ?? []),
+        detectSkill({
+          userMessage: ctx.text,
+          previousResponse: sessionRow?.lastResponse ?? null,
+          cachedSkill: sessionRow?.lastSkill ?? null,
+          skillsDir,
+          allowInternal: true,
+        }),
+      ]);
+
+      const baseText = ctx.text + attachmentNote(savedPaths);
+      const userMessage = threadContext ? `${threadContext}\n\n${baseText}` : baseText;
+
+      const baseSystemAppend = buildRootSystemAppend({ isContinuation: Boolean(resumeId) });
+      const systemAppend = skillResult.content
+        ? `# 활성 Skill: ${skillResult.skill}\n\n${skillResult.content}\n\n---\n${baseSystemAppend}`
+        : baseSystemAppend;
+
+      logEvent(this.db, {
+        type: 'claude.invoke',
+        channel: channelLabel,
+        threadId: threadKey,
+        summary: `root resume=${Boolean(resumeId)}`,
+        meta: { target: 'root', resume: Boolean(resumeId) },
+      });
+      emitEvent({
+        ts: new Date().toISOString(),
+        type: 'claude.invoke',
+        channel: channelLabel,
+        threadId: threadKey,
+        summary: `root resume=${Boolean(resumeId)}`,
+      });
+
+      let result;
+      try {
+        result = await runClaude({
+          cwd,
+          prompt: userMessage,
+          systemAppend,
+          resume: resumeId,
+          timeoutMs: CLAUDE_TIMEOUT_MS,
+        });
+      } catch (err) {
+        const e = err instanceof ClaudeError ? err : (err as Error);
+        log.error(
+          { err: e.message, channel: channelLabel, threadId: threadKey },
+          'claude run failed in root',
+        );
+        logEvent(this.db, {
+          type: 'claude.error',
+          channel: channelLabel,
+          threadId: threadKey,
+          summary: e.message.slice(0, 300),
+          meta: { target: 'root' },
+        });
+        emitEvent({
+          ts: new Date().toISOString(),
+          type: 'claude.error',
+          channel: channelLabel,
+          threadId: threadKey,
+          summary: e.message.slice(0, 300),
+        });
+        try {
+          await this.safeSend(target.channelId, `claude run failed: ${truncate(e.message, 1500)}`);
+        } catch (sendErr) {
+          log.error(
+            { err: (sendErr as Error).message },
+            'failed to post claude error message (root)',
+          );
+        }
+        return;
+      }
+
+      logUsage(this.db, {
+        sessionId: result.sessionId,
+        contextWindowUsed: result.contextWindowUsed,
+        contextWindowMax: result.contextWindowMax,
+        costUsd: result.costUsd,
+      });
+      const usageFooter = buildUsageFooter(this.db, {
+        sessionId: result.sessionId,
+        contextWindowUsed: result.contextWindowUsed,
+        contextWindowMax: result.contextWindowMax,
+        costUsd: result.costUsd,
+      });
+
+      const chunks = splitMessage(result.text, SAFE_CHUNK_SIZE);
+      if (chunks.length > 0) chunks[chunks.length - 1] += '\n' + usageFooter;
+      for (const chunk of chunks) {
+        try {
+          await this.safeSend(target.channelId, chunk);
+        } catch (err) {
+          log.error(
+            { err: (err as Error).message, channel: channelLabel, threadId: threadKey },
+            'failed to send response chunk (root)',
+          );
+          break;
+        }
+      }
+
+      await this.sendArtifacts(target.channelId, result.artifacts);
+
+      try {
+        upsertSession(this.db, {
+          threadId: threadKey,
+          claudeSessionId: result.sessionId,
+          repo: 'root',
+          cwd,
+          lastSkill: skillResult.skill,
+          lastResponse: truncateForCache(result.text),
+        });
+      } catch (err) {
+        log.error(
+          { err: (err as Error).message, threadId: threadKey },
+          'failed to upsert session (root)',
+        );
+      }
+
+      logEvent(this.db, {
+        type: 'claude.result',
+        channel: channelLabel,
+        threadId: threadKey,
+        summary: `${result.durationMs}ms ${result.text.length}chars`,
+        meta: { duration_seconds: result.durationMs / 1000, target: 'root' },
+      });
+      emitEvent({
+        ts: new Date().toISOString(),
+        type: 'claude.result',
+        channel: channelLabel,
+        threadId: threadKey,
+        summary: `${result.durationMs}ms ${result.text.length}chars`,
+      });
+
+      logEvent(this.db, {
+        type: 'discord.message.out',
+        channel: channelLabel,
+        threadId: threadKey,
+        summary: result.text.slice(0, 500),
+        meta: { chunks: chunks.length, target: 'root' },
+      });
+      emitEvent({
+        ts: new Date().toISOString(),
+        type: 'discord.message.out',
+        channel: channelLabel,
+        threadId: threadKey,
+        summary: result.text.slice(0, 500),
       });
     } finally {
       stopTyping();
