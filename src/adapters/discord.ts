@@ -90,7 +90,7 @@ export function parseCreateSkillButtonId(customId: string): number | null {
 const DISCORD_MESSAGE_HARD_LIMIT = 2000;
 const SAFE_CHUNK_SIZE = 1900; // headroom for the [i/N]\n prefix
 const THREAD_NAME_MAX = 90; // Discord limit is 100; leave headroom
-const CLAUDE_TIMEOUT_MS = 1_800_000; // 30 min
+const CLAUDE_TIMEOUT_MS = 3_600_000; // 1 hour
 
 // ---------------------------------------------------------------------------
 // Helpers (exported for shape testing)
