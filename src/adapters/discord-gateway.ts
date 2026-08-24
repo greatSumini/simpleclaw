@@ -213,6 +213,13 @@ export class DiscordGatewayAdapter implements MailAlertPoster {
     if (msg.author?.bot) return;
     if (!this.client.user) return;
     if (msg.author.id === this.client.user.id) return;
+    if (msg.system) {
+      log.debug(
+        { channelId: msg.channelId, type: msg.type },
+        'gateway: system message ignored (e.g. thread/channel rename)',
+      );
+      return;
+    }
 
     const ownerId = this.config.env.DISCORD_OWNER_USER_ID;
     if (msg.author.id !== ownerId && !this.isAllowedUser(msg)) {
