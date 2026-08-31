@@ -261,7 +261,7 @@ export class DiscordGatewayAdapter implements MailAlertPoster {
     if (user.id !== this.config.env.DISCORD_OWNER_USER_ID) return;
 
     const emoji = reaction.emoji.name;
-    if (emoji !== '✅' && emoji !== '❌' && emoji !== '🌀') return;
+    if (emoji !== '✅' && emoji !== '❌' && emoji !== '🌀' && emoji !== '🛑') return;
 
     const msg = reaction.message.partial ? await reaction.message.fetch() : reaction.message;
 

@@ -323,6 +323,17 @@ export class TmuxRunner {
     }
   }
 
+  /**
+   * Interrupt the in-flight turn by sending Escape to the pane.
+   * The session itself stays alive. No-op if no session exists for the key.
+   */
+  async interrupt(key: string): Promise<void> {
+    const s = this.sessions.get(key);
+    if (!s) return;
+    await this.cmd(['tmux', 'send-keys', '-t', s.name, 'Escape']);
+    log.info({ key, name: s.name }, 'tmux: interrupt (Escape) sent');
+  }
+
   async kill(key: string): Promise<void> {
     const s = this.sessions.get(key);
     if (!s) return;

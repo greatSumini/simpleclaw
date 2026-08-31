@@ -244,6 +244,8 @@ export class DiscordAdapter implements MessengerAdapter {
   private readonly ipc: WorkerIpc;
   /** Per-thread (or per-channel for DMs) mutex chain. */
   private readonly threadLocks: Map<string, Promise<void>> = new Map();
+  /** In-flight engine runs keyed by threadKey — abortable via 🛑 reaction. */
+  private readonly activeRuns: Map<string, AbortController> = new Map();
   /** Number of Claude runs currently executing inside runWithMutex. */
   private inFlightCount = 0;
   /** Set when a drain/restart has been requested. */
@@ -335,6 +337,14 @@ export class DiscordAdapter implements MessengerAdapter {
     isThread: boolean,
   ): Promise<void> {
     if (!isOwner) return;
+
+    // 🛑: abort the in-flight engine run for this thread. The cancelled run's own
+    // catch block posts the confirmation, so this only replies when nothing is running.
+    if (emoji === '🛑') {
+      await this.handleCancelReaction(channelId, isThread);
+      return;
+    }
+
     if (emoji !== '✅' && emoji !== '❌') return;
 
     // Find the mail thread: by starter message ID, or by thread channel ID.
@@ -428,6 +438,62 @@ export class DiscordAdapter implements MessengerAdapter {
         { err: (err as Error).message, channelId },
         'failed to delete general thread',
       );
+    }
+  }
+
+  private async handleCancelReaction(channelId: string, isThread: boolean): Promise<void> {
+    const controller = this.activeRuns.get(channelId);
+    if (!controller || controller.signal.aborted) {
+      // 일반 채널(스레드 아님)에는 안내를 남기지 않는다 — 무관한 🛑 리액션에 대한 노이즈 방지.
+      if (!isThread) {
+        log.info({ channelId }, 'cancel: 🛑 on non-thread channel with no active run — ignored');
+        return;
+      }
+      try {
+        await this.safeSend(channelId, '취소할 실행 중인 작업이 없습니다.');
+      } catch (err) {
+        log.error({ err: (err as Error).message, channelId }, 'cancel: reply failed');
+      }
+      return;
+    }
+
+    log.info({ threadId: channelId }, 'run cancel requested via 🛑 reaction');
+    controller.abort();
+    // tmux 엔진은 AbortSignal이 폴링만 멈추므로 pane에 Escape도 전송 (세션 없으면 no-op).
+    void tmuxRunner.interrupt(channelId).catch((err: Error) =>
+      log.warn({ err: err.message, channelId }, 'cancel: tmux interrupt failed'),
+    );
+  }
+
+  /** Post the cancellation notice + log events after an aborted engine run. */
+  private async notifyCancelled(
+    channelLabel: string,
+    threadKey: string,
+    channelId: string,
+    flow: string,
+  ): Promise<void> {
+    log.info({ channel: channelLabel, threadId: threadKey, flow }, 'engine run cancelled');
+    logEvent(this.db, {
+      type: 'claude.cancelled',
+      channel: channelLabel,
+      threadId: threadKey,
+      summary: '🛑 리액션으로 실행 취소됨',
+      meta: { flow },
+    });
+    emitEvent({
+      ts: new Date().toISOString(),
+      type: 'claude.cancelled',
+      channel: channelLabel,
+      threadId: threadKey,
+      summary: '🛑 리액션으로 실행 취소됨',
+    });
+    try {
+      await this.safeSend(
+        channelId,
+        '⏹ 작업을 취소했습니다. 취소 시점까지 이미 수행된 변경사항(파일 수정·커밋 등)은 롤백되지 않습니다.',
+      );
+    } catch (err) {
+      log.error({ err: (err as Error).message, threadId: threadKey }, 'cancel notice send failed');
     }
   }
 
@@ -619,6 +685,8 @@ export class DiscordAdapter implements MessengerAdapter {
 
     // Typing indicator.
     const stopTyping = this.startTyping(target.channelId);
+    const controller = new AbortController();
+    this.activeRuns.set(threadKey, controller);
 
     try {
       const skillsDir = path.join(this.config.simpleclawRepoPath, 'skills');
@@ -677,6 +745,7 @@ export class DiscordAdapter implements MessengerAdapter {
             prompt: userMessage,
             systemAppend,
             sessionKey: threadKey,
+            signal: controller.signal,
             timeoutMs: CLAUDE_TIMEOUT_MS,
           });
           result = {
@@ -696,10 +765,15 @@ export class DiscordAdapter implements MessengerAdapter {
             prompt: userMessage,
             systemAppend,
             resume: resumeId,
+            signal: controller.signal,
             timeoutMs: CLAUDE_TIMEOUT_MS,
           });
         }
       } catch (err) {
+        if (controller.signal.aborted) {
+          await this.notifyCancelled(channelLabel, threadKey, target.channelId, 'repo-work');
+          return;
+        }
         const e = err instanceof ClaudeError || err instanceof TmuxError ? err : (err as Error);
         log.error(
           { err: e.message, channel: channelLabel, threadId: threadKey, repo: repo.fullName },
@@ -818,6 +892,7 @@ export class DiscordAdapter implements MessengerAdapter {
         summary: result.text.slice(0, 500),
       });
     } finally {
+      this.activeRuns.delete(threadKey);
       stopTyping();
     }
   }
@@ -878,6 +953,8 @@ export class DiscordAdapter implements MessengerAdapter {
     const resumeId = sessionRow?.claudeSessionId;
 
     const stopTyping = this.startTyping(target.channelId);
+    const controller = new AbortController();
+    this.activeRuns.set(threadKey, controller);
 
     try {
       const skillsDir = path.join(cwd, 'skills');
@@ -931,9 +1008,14 @@ export class DiscordAdapter implements MessengerAdapter {
           prompt: userMessage,
           systemAppend,
           resume: resumeId,
+          signal: controller.signal,
           timeoutMs: CLAUDE_TIMEOUT_MS,
         });
       } catch (err) {
+        if (controller.signal.aborted) {
+          await this.notifyCancelled(channelLabel, threadKey, target.channelId, 'simpleclaw-maintenance');
+          return;
+        }
         const e = err instanceof ClaudeError ? err : (err as Error);
         log.error(
           { err: e.message, channel: channelLabel, threadId: threadKey },
@@ -1069,6 +1151,7 @@ export class DiscordAdapter implements MessengerAdapter {
         this.scheduleGracefulRestart(channelLabel, threadKey);
       }
     } finally {
+      this.activeRuns.delete(threadKey);
       stopTyping();
     }
   }
@@ -1134,6 +1217,8 @@ export class DiscordAdapter implements MessengerAdapter {
     const systemAppend = buildWikiIngestSystemAppend({ isUrl });
 
     const stopTyping = this.startTyping(target.channelId);
+    const controller = new AbortController();
+    this.activeRuns.set(threadKey, controller);
     try {
       logEvent(this.db, {
         type: 'claude.invoke',
@@ -1157,9 +1242,14 @@ export class DiscordAdapter implements MessengerAdapter {
           cwd: wikiDir,
           prompt,
           systemAppend,
+          signal: controller.signal,
           timeoutMs: CLAUDE_TIMEOUT_MS,
         });
       } catch (err) {
+        if (controller.signal.aborted) {
+          await this.notifyCancelled(channelLabel, threadKey, target.channelId, 'wiki-ingest');
+          return;
+        }
         const e = err instanceof ClaudeError ? err : (err as Error);
         log.error(
           { err: e.message, channel: channelLabel, threadId: threadKey },
@@ -1244,6 +1334,7 @@ export class DiscordAdapter implements MessengerAdapter {
         summary: `${result.durationMs}ms ${result.text.length}chars`,
       });
     } finally {
+      this.activeRuns.delete(threadKey);
       stopTyping();
     }
   }
@@ -1304,6 +1395,8 @@ export class DiscordAdapter implements MessengerAdapter {
     const resumeId = sessionRow?.claudeSessionId;
 
     const stopTyping = this.startTyping(target.channelId);
+    const controller = new AbortController();
+    this.activeRuns.set(threadKey, controller);
 
     try {
       const skillsDir = path.join(this.config.simpleclawRepoPath, 'skills');
@@ -1349,9 +1442,14 @@ export class DiscordAdapter implements MessengerAdapter {
           prompt: userMessage,
           systemAppend,
           resume: resumeId,
+          signal: controller.signal,
           timeoutMs: CLAUDE_TIMEOUT_MS,
         });
       } catch (err) {
+        if (controller.signal.aborted) {
+          await this.notifyCancelled(channelLabel, threadKey, target.channelId, 'root');
+          return;
+        }
         const e = err instanceof ClaudeError ? err : (err as Error);
         log.error(
           { err: e.message, channel: channelLabel, threadId: threadKey },
@@ -1457,6 +1555,7 @@ export class DiscordAdapter implements MessengerAdapter {
         summary: result.text.slice(0, 500),
       });
     } finally {
+      this.activeRuns.delete(threadKey);
       stopTyping();
     }
   }
