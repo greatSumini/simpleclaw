@@ -111,6 +111,11 @@ export class WorkerIpc extends EventEmitter {
     this.rawSend({ type: 'discord.message.delete', channelId, msgId });
   }
 
+  /** Fire-and-forget reaction ack. Failure is non-fatal — the gateway logs and drops it. */
+  discordReact(channelId: string, msgId: string, emoji: string): void {
+    this.rawSend({ type: 'discord.message.react', channelId, msgId, emoji });
+  }
+
   async discordArchiveThread(channelId: string): Promise<void> {
     const reqId = this.newId();
     return this.request<void>({ type: 'discord.thread.archive', reqId, channelId });

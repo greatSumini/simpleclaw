@@ -15,6 +15,7 @@ import { logUsage, buildUsageFooter } from '../state/usage.js';
 import { logEvent, searchEvents, type EventSearchResult } from '../state/events.js';
 import { emitEvent } from '../dashboard/event-bus.js';
 import { routeMessage } from '../orchestrator/router.js';
+import { isMemoMessage } from '../orchestrator/memo.js';
 import {
   buildRepoWorkSystemAppend,
   buildSimpleClawMaintenanceSystemAppend,
@@ -529,6 +530,26 @@ export class DiscordAdapter implements MessengerAdapter {
       threadId: ctx.threadId ?? undefined,
       summary: ctx.text.slice(0, 500),
     });
+
+    // 기록 전용 마커(📝 등)로 시작하면 여기서 끝 — 스레드도 만들지 않고 엔진도 돌리지 않는다.
+    // 라우팅 파이프라인보다 먼저 검사하는 이유: repo 바인딩 채널은 라우터에 도달하는 순간
+    // 무조건 repo-work가 되므로, 그 앞에서 잘라내야 "기록일 뿐"이 지켜진다.
+    if (isMemoMessage(ctx.text)) {
+      logEvent(this.db, {
+        type: 'discord.message.memo',
+        channel: ctx.channelName ?? ctx.channelId,
+        threadId: ctx.threadId ?? undefined,
+        summary: ctx.text.slice(0, 500),
+        meta: { authorId: ctx.authorId },
+      });
+      log.info(
+        { channel: ctx.channelName ?? ctx.channelId, msgId },
+        'memo marker — skipped (no thread, no engine run)',
+      );
+      // 무반응과 구분되도록 원본 메시지에 리액션만 남긴다 (스레드·메시지 생성 없음).
+      this.ipc.discordReact(channelId, msgId, '🗒️');
+      return;
+    }
 
     // /search shortcut — intercept before routing pipeline.
     if (ctx.text.startsWith('/search')) {

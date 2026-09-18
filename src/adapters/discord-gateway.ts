@@ -535,6 +535,20 @@ export class DiscordGatewayAdapter implements MailAlertPoster {
         return;
       }
 
+      case 'discord.message.react': {
+        const { channelId, msgId, emoji } = req;
+        try {
+          const channel = await this.client.channels.fetch(channelId);
+          if (channel && 'messages' in channel) {
+            const msg = await (channel as { messages: { fetch: (id: string) => Promise<Message> } }).messages.fetch(msgId);
+            await msg.react(emoji);
+          }
+        } catch (err) {
+          log.error({ err: (err as Error).message, channelId, msgId, emoji }, 'discord.message.react failed');
+        }
+        return;
+      }
+
       case 'discord.typing.start': {
         this.startGatewayTyping(req.channelId);
         return;
