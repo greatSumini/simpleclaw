@@ -43,7 +43,8 @@ const SAFE_CHUNK_SIZE = 1900;
 const THREAD_NAME_MAX = 90;
 const DEFAULT_AUTO_ARCHIVE_MIN = 1440;
 const TYPING_REFRESH_MS = 9_000;
-const TYPING_MAX_LIFETIME_MS = 30 * 60_000;
+// discord.ts CLAUDE_TIMEOUT_MS(1h)보다 약간 길게 — 정상 실행 중 typing이 먼저 끊겨 멈춘 것처럼 보이는 문제 방지
+const TYPING_MAX_LIFETIME_MS = 65 * 60_000;
 
 interface DiscordGatewayAdapterOpts {
   config: AppConfig;
