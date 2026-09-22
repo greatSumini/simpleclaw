@@ -1,4 +1,8 @@
-# SimpleClaw
+<p align="center">
+  <img src="docs/assets/avatar.png" alt="SimpleClaw" width="160" />
+</p>
+
+<h1 align="center">SimpleClaw</h1>
 
 > Discord/Gmail을 인터페이스로, `claude` CLI를 두뇌로 — macOS에서 24/7 돌아가는 개인 AI 에이전트 게이트웨이.
 
