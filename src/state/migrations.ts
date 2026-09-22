@@ -341,6 +341,20 @@ const MIGRATIONS: Migration[] = [
       DROP TABLE IF EXISTS memories_candidate;
     `,
   },
+  {
+    // Poll bookkeeping for background_jobs. Before this, checked_at was only written on a
+    // status transition, and every check_cmd failure — including a typo'd command (exit 127)
+    // or a missing cwd — looked exactly like "not done yet" until expiry. error_streak /
+    // error_notified let the scheduler tell "still running" apart from "the check is broken"
+    // and say so once, instead of waiting silently for the TTL.
+    name: '019_background_jobs_poll_state',
+    sql: `
+      ALTER TABLE background_jobs ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE background_jobs ADD COLUMN error_streak INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE background_jobs ADD COLUMN error_notified INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE background_jobs ADD COLUMN last_error TEXT;
+    `,
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

@@ -16,6 +16,7 @@ import { logEvent, searchEvents, type EventSearchResult } from '../state/events.
 import { emitEvent } from '../dashboard/event-bus.js';
 import { routeMessage } from '../orchestrator/router.js';
 import { isMemoMessage } from '../orchestrator/memo.js';
+import { getPendingBackgroundJobsForThread } from '../state/background-jobs.js';
 import {
   buildRepoWorkSystemAppend,
   buildSimpleClawMaintenanceSystemAppend,
@@ -221,6 +222,39 @@ export function truncate(s: string, max: number): string {
   if (s.length <= max) return s;
   if (max <= 1) return s.slice(0, max);
   return s.slice(0, max - 1).trimEnd() + '…';
+}
+
+/**
+ * User-facing text for an engine run that died (timeout / non-zero exit).
+ *
+ * The old raw `claude run failed: claude run exceeded timeout 3600000ms` told the user neither
+ * what survived nor how to continue, so the next message was always "다 했어?". The session
+ * id is only replaced on success, so the thread's previous session is intact and resumable.
+ */
+export function formatEngineFailure(
+  message: string,
+  timeoutMs: number,
+  pendingJobs: ReadonlyArray<{ id: number; description: string }> = [],
+): string {
+  const lines: string[] = [];
+  if (/exceeded timeout/.test(message)) {
+    lines.push(
+      `⏱️ 실행 한도(${Math.round(timeoutMs / 60_000)}분)에 걸려 이번 턴이 중단됐습니다. ` +
+        '중단 시점까지 저장·커밋된 결과물은 남아 있고, 세션도 보존돼 있어 "이어서 진행해줘"라고 하면 이어갑니다.',
+    );
+  } else {
+    lines.push(
+      `⚠️ 엔진 실행이 실패했습니다: ${truncate(message, 1200)}
+세션은 보존돼 있어 같은 스레드에서 다시 요청하면 이어갑니다.`,
+    );
+  }
+  if (pendingJobs.length > 0) {
+    lines.push(
+      `백그라운드 작업 ${pendingJobs.length}건은 계속 추적 중입니다 (끝나면 자동 알림): ` +
+        pendingJobs.map((j) => `#${j.id} ${j.description}`).join(', '),
+    );
+  }
+  return lines.join('\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -815,7 +849,10 @@ export class DiscordAdapter implements MessengerAdapter {
           summary: e.message.slice(0, 300),
         });
         try {
-          await this.safeSend(target.channelId, `claude run failed: ${truncate(e.message, 1500)}`);
+          await this.safeSend(
+            target.channelId,
+            formatEngineFailure(e.message, CLAUDE_TIMEOUT_MS, getPendingBackgroundJobsForThread(this.db, threadKey)),
+          );
         } catch (sendErr) {
           log.error(
             { err: (sendErr as Error).message },
@@ -1059,7 +1096,7 @@ export class DiscordAdapter implements MessengerAdapter {
         try {
           await this.safeSend(
             target.channelId,
-            `claude run failed: ${truncate(e.message, 1500)}`,
+            formatEngineFailure(e.message, CLAUDE_TIMEOUT_MS, getPendingBackgroundJobsForThread(this.db, threadKey)),
           );
         } catch (sendErr) {
           log.error(
@@ -1491,7 +1528,10 @@ export class DiscordAdapter implements MessengerAdapter {
           summary: e.message.slice(0, 300),
         });
         try {
-          await this.safeSend(target.channelId, `claude run failed: ${truncate(e.message, 1500)}`);
+          await this.safeSend(
+            target.channelId,
+            formatEngineFailure(e.message, CLAUDE_TIMEOUT_MS, getPendingBackgroundJobsForThread(this.db, threadKey)),
+          );
         } catch (sendErr) {
           log.error(
             { err: (sendErr as Error).message },

@@ -902,7 +902,29 @@ export class DiscordGatewayAdapter implements MailAlertPoster {
       throw new Error(`postToChannel: channel ${channelId} not found or not text-based`);
     }
     const payload = content.length === 0 ? ' ' : content;
-    await (channel as { send: (c: string) => Promise<Message> }).send(payload);
+    const send = (c: string, target: unknown = channel): Promise<Message> =>
+      (target as { send: (c: string) => Promise<Message> }).send(c);
+
+    // Background notices land long after the conversation — the thread has often been closed
+    // with ✅ or auto-archived by then, and Discord rejects posts to archived threads (50083).
+    // Reopen it; if that's impossible (locked / no permission), fall back to the parent channel
+    // so the notice is never silently dropped.
+    if (!channel.isThread()) {
+      await send(payload);
+      return;
+    }
+    try {
+      if (channel.archived && !channel.locked) await channel.setArchived(false, 'SimpleClaw background notice');
+      await send(payload);
+    } catch (err) {
+      const parent = channel.parent;
+      if (!parent || !('send' in parent)) throw err;
+      log.warn(
+        { err: (err as Error).message, threadId: channelId, parentId: parent.id },
+        'postToChannel: thread unavailable — falling back to parent channel',
+      );
+      await send(`(스레드 <#${channelId}> 대상 알림 — 스레드에 게시하지 못해 여기로 보냅니다)\n${payload}`, parent);
+    }
   }
 
   // -------------------------------------------------------------------------
