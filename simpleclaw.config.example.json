@@ -23,5 +23,9 @@
       "email": "you@example.com",
       "label": "personal"
     }
+  ],
+  "githubScopes": [
+    "your-github-username",
+    "your-org"
   ]
 }

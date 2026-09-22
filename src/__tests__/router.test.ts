@@ -44,6 +44,7 @@ function makeConfig(): AppConfig {
       DATA_DIR: dataDir,
       LOGS_DIR: path.join(dataDir, 'logs'),
       WIKI_DIR: path.join(os.tmpdir(), 'coding-agent-wiki'),
+      REPOS_DIR: '/tmp/repos',
     },
     repoChannels: [
       {
@@ -64,6 +65,8 @@ function makeConfig(): AppConfig {
       },
     ],
     generalChannelId: GENERAL_CH,
+    projectWizard: { githubScopes: ['vibemafiaclub'], reposDir: '/tmp/repos', channelCategoryId: undefined },
+    configFilePath: path.join(dataDir, 'simpleclaw.config.json'),
     mailAlertChannelId: REPO_CH,
     simpleclawChannelId: SIMPLECLAW_CH,
     wikiChannelId: undefined,

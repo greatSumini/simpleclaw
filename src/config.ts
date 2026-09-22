@@ -24,6 +24,8 @@ const Schema = z.object({
   DISCORD_CHANNEL_WIKI: z.string().optional(),
   /** Optional — root channel. No repo binding; spawns Claude Code at $HOME with full access, owner-only. */
   DISCORD_CHANNEL_ROOT: z.string().optional(),
+  /** Root directory for local clones — new projects clone into $REPOS_DIR/{scope}/{name}. */
+  REPOS_DIR: z.string().default(path.resolve(os.homedir(), 'repos')),
   /** Absolute path to the LLM wiki directory. Defaults to ~/coding-agent-wiki */
   WIKI_DIR: z.string().default(path.resolve(os.homedir(), 'coding-agent-wiki')),
   DISCORD_OWNER_USER_ID: z.string().min(1),
@@ -115,6 +117,16 @@ export interface AppConfig {
   /** Channel for iMessage alerts (DISCORD_CHANNEL_IMESSAGE_ALERTS → DISCORD_CHANNEL_MAIL_ALERTS → general) */
   imessageAlertChannelId: string;
   gmail: GmailAccount[];
+  /** New-project wizard settings (🆕 button in the simpleclaw channel). */
+  projectWizard: {
+    /** GitHub owners (user/org) offered in the scope dropdown. Local path follows: reposDir/{scope}/{name}. */
+    githubScopes: string[];
+    reposDir: string;
+    /** Discord category for newly created channels. Undefined → same category as the general channel. */
+    channelCategoryId: string | undefined;
+  };
+  /** Absolute path of the simpleclaw.config.json that was loaded (the wizard appends repos to it). */
+  configFilePath: string;
   paths: {
     dataDir: string;
     logsDir: string;
@@ -147,9 +159,13 @@ const GmailAccountConfigSchema = z.object({
 const SimpleClawConfigSchema = z.object({
   repos: z.array(RepoEntryConfigSchema).min(1),
   gmail: z.array(GmailAccountConfigSchema).default([]),
+  /** GitHub scopes (user/org) offered by the new-project wizard. Defaults to owners of registered repos. */
+  githubScopes: z.array(z.string().min(1)).max(25).optional(),
+  /** Discord category ID for channels created by the new-project wizard. */
+  projectChannelCategoryId: z.string().optional(),
 });
 
-function loadSimpleClawConfig(): z.infer<typeof SimpleClawConfigSchema> {
+function loadSimpleClawConfig(): { config: z.infer<typeof SimpleClawConfigSchema>; path: string } {
   const configPath = path.resolve(process.cwd(), 'simpleclaw.config.json');
   const legacyPath = path.resolve(process.cwd(), 'claw.config.json');
 
@@ -169,12 +185,12 @@ function loadSimpleClawConfig(): z.infer<typeof SimpleClawConfigSchema> {
     }
   }
   const raw = JSON.parse(fs.readFileSync(resolvedPath, 'utf-8'));
-  return SimpleClawConfigSchema.parse(raw);
+  return { config: SimpleClawConfigSchema.parse(raw), path: resolvedPath };
 }
 
 export function loadConfig(): AppConfig {
   const env = Schema.parse(process.env);
-  const simpleclawConfig = loadSimpleClawConfig();
+  const { config: simpleclawConfig, path: configFilePath } = loadSimpleClawConfig();
 
   const repoChannels: RepoEntry[] = simpleclawConfig.repos;
 
@@ -224,6 +240,14 @@ export function loadConfig(): AppConfig {
         ? { botToken: env.VMC_BOT_TOKEN, channelId: env.VMC_DIGEST_CHANNEL_ID }
         : null,
     gmail,
+    projectWizard: {
+      githubScopes:
+        simpleclawConfig.githubScopes ??
+        [...new Set(repoChannels.map((r) => r.fullName.split('/')[0]))],
+      reposDir: env.REPOS_DIR,
+      channelCategoryId: simpleclawConfig.projectChannelCategoryId,
+    },
+    configFilePath,
     imessageEnabled: env.IMESSAGE_ENABLED,
     imessageAlertChannelId:
       env.DISCORD_CHANNEL_IMESSAGE_ALERTS ??

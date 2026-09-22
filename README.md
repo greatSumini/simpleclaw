@@ -154,7 +154,9 @@ tail -f logs/launchd.log logs/launchd.error.log
   ],
   "gmail": [
     { "email": "you@example.com", "label": "personal" }
-  ]
+  ],
+  "githubScopes": ["your-github-username", "your-org"], // 새 프로젝트 버튼의 scope 선택지 (최대 25, 생략 시 repos의 owner 목록)
+  "projectChannelCategoryId": "CATEGORY_ID"            // 선택 — 새 채널을 만들 카테고리 (생략 시 일반 채널과 같은 카테고리)
 }
 ```
 
@@ -200,6 +202,18 @@ Claude가 소스를 수정한 뒤 응답에 `__SIMPLECLAW_RESTART__` 마커를 �
 2. `pnpm build` (자동)
 3. `launchctl kickstart -k gui/<uid>/com.simpleclaw`
 4. 재시작 중 수신된 메시지는 queue에 저장 후 재생
+
+### 새 프로젝트 버튼
+
+`DISCORD_CHANNEL_SIMPLECLAW` 채널에 **🆕 새 프로젝트** 버튼이 자동으로 게시됩니다 (owner 전용).
+
+1. 버튼 → 폼: GitHub scope(`githubScopes`) / repo 이름 / 공개 여부 / 이슈·PR 감시 / 설명
+2. 계획 카드 확인 → **✅ 진행**
+3. GitHub repo 생성(`gh repo create --add-readme`) → `$REPOS_DIR/{scope}/{이름}`에 clone → 같은 이름의 Discord 채널 생성 → `simpleclaw.config.json`에 등록
+
+- 재시작 없이 바로 반영됩니다(gateway·worker 설정을 런타임에 갱신).
+- 모든 단계는 멱등적입니다. 이미 있는 repo·clone·채널은 재사용하므로 기존 repo 연결에도 쓸 수 있고, 실패 후 **다시 시도**하면 이어서 진행합니다. 실패해도 아무것도 삭제하지 않습니다.
+- 봇에 **채널 관리** 권한이 있어야 채널을 만들 수 있습니다.
 
 ### Gmail 통합
 

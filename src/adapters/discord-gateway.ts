@@ -13,6 +13,7 @@ import {
   Partials,
   Routes,
   type ButtonInteraction,
+  type ModalSubmitInteraction,
   type Message,
   type MessageReaction,
   type PartialMessageReaction,
@@ -35,6 +36,7 @@ import { logEvent } from '../state/events.js';
 import { logUsage, buildUsageFooter } from '../state/usage.js';
 import { buildWikiScanSystemAppend } from '../orchestrator/prompt.js';
 import { splitMessage, truncate, makeThreadTitle } from './discord.js';
+import { ProjectWizard, PROJECT_ID_PREFIX } from './project-wizard.js';
 
 // Re-export MailAlertPoster alias for backward compat
 export type { MailAlertPoster as DiscordPoster };
@@ -63,6 +65,7 @@ export class DiscordGatewayAdapter implements MailAlertPoster {
   private wikiScanTask: Promise<void> | null = null;
   /** channelId → cleanup function for ongoing typing loops */
   private typingLoops = new Map<string, () => void>();
+  private readonly projectWizard: ProjectWizard;
 
   constructor(opts: DiscordGatewayAdapterOpts) {
     this.config = opts.config;
@@ -78,6 +81,7 @@ export class DiscordGatewayAdapter implements MailAlertPoster {
       ],
       partials: [Partials.Channel, Partials.Message, Partials.Reaction],
     });
+    this.projectWizard = new ProjectWizard({ client: this.client, config: this.config, db: this.db, ipc: this.ipc });
   }
 
   // -------------------------------------------------------------------------
@@ -98,7 +102,19 @@ export class DiscordGatewayAdapter implements MailAlertPoster {
     });
 
     this.client.on(Events.InteractionCreate, (interaction) => {
+      if (interaction.isModalSubmit() && interaction.customId.startsWith(PROJECT_ID_PREFIX)) {
+        void this.projectWizard.onModalSubmit(interaction as ModalSubmitInteraction).catch((err) => {
+          log.error({ err: (err as Error).message }, 'project-wizard modal handler crashed');
+        });
+        return;
+      }
       if (!interaction.isButton()) return;
+      if (interaction.customId.startsWith(PROJECT_ID_PREFIX)) {
+        void this.projectWizard.onButton(interaction as ButtonInteraction).catch((err) => {
+          log.error({ err: (err as Error).message }, 'project-wizard button handler crashed');
+        });
+        return;
+      }
       void this.onButtonInteraction(interaction as ButtonInteraction).catch((err) => {
         log.error(
           { err: (err as Error).message },
@@ -155,6 +171,10 @@ export class DiscordGatewayAdapter implements MailAlertPoster {
       this.started = false;
       throw err;
     }
+
+    void this.projectWizard.ensureLauncher().catch((err) => {
+      log.warn({ err: (err as Error).message }, 'project-wizard: launcher setup failed');
+    });
 
     // Register IPC discord handler AFTER Discord is ready
     this.ipc.setDiscordHandler((req) => this.handleWorkerRequest(req));

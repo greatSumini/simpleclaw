@@ -91,8 +91,6 @@ export class GitHubIssueAdapter {
   private readonly config: AppConfig;
   private readonly db: Database.Database;
   private readonly poster: ChannelAndThreadPoster;
-  private readonly issueRepos: RepoEntry[];
-  private readonly prRepos: RepoEntry[];
   private readonly intervalMs: number;
 
   private timer: NodeJS.Timeout | null = null;
@@ -103,17 +101,20 @@ export class GitHubIssueAdapter {
     this.config = opts.config;
     this.db = opts.db;
     this.poster = opts.poster;
-    this.issueRepos = opts.config.repoChannels.filter((r) => r.watchIssues);
-    this.prRepos = opts.config.repoChannels.filter((r) => r.watchPrs);
     this.intervalMs = Math.max(60_000, opts.config.env.MAIL_POLL_INTERVAL_SEC * 1000);
   }
 
+  // Evaluated per cycle (not cached) — the new-project wizard appends repos at runtime.
+  private get issueRepos(): RepoEntry[] {
+    return this.config.repoChannels.filter((r) => r.watchIssues);
+  }
+
+  private get prRepos(): RepoEntry[] {
+    return this.config.repoChannels.filter((r) => r.watchPrs);
+  }
+
   async start(): Promise<void> {
-    const watchedCount = new Set([...this.issueRepos, ...this.prRepos]).size;
-    if (watchedCount === 0) {
-      log.warn('github adapter: no repos configured with watchIssues/watchPrs — skipping');
-      return;
-    }
+    // Keep polling even with nothing watched yet — repos can be added at runtime.
     log.info(
       {
         issueRepos: this.issueRepos.map((r) => r.fullName),

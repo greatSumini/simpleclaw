@@ -1,3 +1,5 @@
+import type { RepoEntry } from '../config.js';
+
 export interface MessageContext {
   platform: string;
   channelId: string;
@@ -26,7 +28,9 @@ export interface SerializedMessage {
 export type G2WEvent =
   | { type: 'discord.message'; ctx: MessageContext; threadKey: string; msgId: string; channelId: string }
   | { type: 'discord.reaction'; emoji: string; msgId: string; channelId: string; userId: string; isOwner: boolean; isThread: boolean }
-  | { type: 'discord.button'; customId: string; channelId: string; msgId: string; interactionId: string; token: string };
+  | { type: 'discord.button'; customId: string; channelId: string; msgId: string; interactionId: string; token: string }
+  /** A repo was bound at runtime (new-project wizard) — worker appends it to its config.repoChannels. */
+  | { type: 'config.repo.added'; repo: RepoEntry };
 
 /** Gateway → Worker: responses to requests */
 export type G2WResponse =

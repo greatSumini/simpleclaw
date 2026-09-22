@@ -322,6 +322,11 @@ export class DiscordAdapter implements MessengerAdapter {
         void this.onIpcReaction(msg.emoji, msg.msgId, msg.channelId, msg.userId, msg.isOwner, msg.isThread).catch((err) => {
           log.error({ err: (err as Error).message }, 'discord reaction handler crashed');
         });
+      } else if (msg.type === 'config.repo.added') {
+        if (!this.config.repoChannels.some((r) => r.channelId === msg.repo.channelId)) {
+          this.config.repoChannels.push(msg.repo);
+          log.info({ fullName: msg.repo.fullName, channelId: msg.repo.channelId }, 'repo bound at runtime');
+        }
       } else if (msg.type === 'discord.button') {
         void this.onIpcButton(msg.customId, msg.channelId, msg.msgId, msg.interactionId, msg.token).catch((err) => {
           log.error({ err: (err as Error).message }, 'discord button interaction handler crashed');
