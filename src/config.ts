@@ -56,6 +56,9 @@ const Schema = z.object({
   VMC_BOT_TOKEN: z.string().optional(),
   /** VMC Discord channel ID to post daily digest (optional) */
   VMC_DIGEST_CHANNEL_ID: z.string().optional(),
+
+  /** TypeSafe Jev API key — fast route 판정용 (optional). 없으면 fast route 비활성. */
+  TYPESAFE_API_KEY: z.string().optional(),
 });
 
 export type Env = z.infer<typeof Schema>;

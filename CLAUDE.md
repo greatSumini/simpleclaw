@@ -46,6 +46,25 @@ __SIMPLECLAW_RESTART__
 
 ---
 
+## Fast route — 등록된 스크립트로 Claude 없이 즉답
+
+repo 채널의 **새 top-level 메시지**는 runClaude 전에 TypeSafe Jev(Choice, ≈0.6s)로 "등록된 route 하나로 온전히 처리 가능한가"를 판정한다. 가능하면 스레드를 열고 route 스크립트의 stdout을 그대로 답한다 (Claude·skill 감지 생략). 구현: `src/orchestrator/fast-route.ts`, 연결: `discord.ts` `handleRepoWork`.
+
+- route 정의는 **repo가 소유**: `{repo}/.simpleclaw/routes.json`
+  ```json
+  { "mode": "on", "minConfidence": 0.8,
+    "routes": [{ "name": "fuel-nearby", "when": "현재 폰 위치 주변 최저가 주유소 조회. 목적지·장소 언급 없을 때만.",
+                 "argv": ["uv", "run", "-q", "car/fuel/find.py", "--format", "discord"], "timeoutMs": 10000 }] }
+  ```
+  - `mode: "shadow"` = 판정만 `events`(`type='fastroute.match'`)에 기록하고 응답은 Claude. 새 route는 shadow로 먼저 검증 권장.
+  - route는 **인자 없는 명령만** — Jev는 텍스트를 생성하지 않으므로 메시지에서 인자를 뽑지 않는다. 메시지 텍스트는 스크립트에 전달되지 않음 (execFile, shell 미경유).
+  - 스크립트 계약: stdout = 최종 Discord 마크다운. exit≠0·빈 출력·타임아웃이면 Claude로 fallback (`type='fastroute.error'`).
+  - 스크립트 env는 PATH/HOME/LANG 등만 전달 — SimpleClaw `.env` 비밀은 넘어가지 않는다. 스크립트는 자기 repo 설정(.env.local 등)을 직접 읽을 것.
+- 적용 조건: `TYPESAFE_API_KEY` 설정 + owner 메시지 + 첨부 없음 + `(btw)` 아님. Jev 오류·`none`·confidence 미달은 전부 Claude.
+- 스레드 안 후속 메시지는 판정 없이 **항상 Claude**. 세션이 없으므로 `fetchThreadContext`가 route 답변을 컨텍스트로 넘긴다.
+
+---
+
 ## Skills 시스템
 
 ### 개요

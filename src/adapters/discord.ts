@@ -17,6 +17,15 @@ import { logEvent, searchEvents, type EventSearchResult } from '../state/events.
 import { emitEvent } from '../dashboard/event-bus.js';
 import { routeMessage } from '../orchestrator/router.js';
 import { isMemoMessage } from '../orchestrator/memo.js';
+import {
+  askJev,
+  loadRouteFile,
+  pickRoute,
+  runRoute,
+  type FastRoute,
+  type FastRouteFile,
+  type JevChoice,
+} from '../orchestrator/fast-route.js';
 import { getPendingBackgroundJobsForThread } from '../state/background-jobs.js';
 import { issueRunToken } from '../state/run-tokens.js';
 import {
@@ -280,6 +289,16 @@ interface DiscordAdapterOpts {
 interface TargetChannel {
   channelId: string;
   threadKey: string;
+}
+
+interface FastRouteMatch {
+  file: FastRouteFile;
+  /** null이면 Jev 호출 실패 (error 참고) */
+  answer: JevChoice | null;
+  /** 실행할 route. null = Claude로 처리 */
+  route: FastRoute | null;
+  latencyMs: number;
+  error?: string;
 }
 
 export class DiscordAdapter implements MessengerAdapter {
@@ -756,6 +775,10 @@ export class DiscordAdapter implements MessengerAdapter {
     const isDm = ctx.isDm;
     const isThread = ctx.threadId !== null;
 
+    // 0. Fast route 판정은 새 top-level 메시지에서만, 스레드 생성과 병렬로 시작.
+    //    스레드 안 후속 메시지는 판정 없이 항상 Claude (세션이 없으면 아래 threadContext로 이어받음).
+    const fastMatch = !isDm && !isThread ? this.matchFastRoute(ctx, repo) : null;
+
     // 1. Determine target channel/thread + session key.
     let target: TargetChannel;
     try {
@@ -788,9 +811,114 @@ export class DiscordAdapter implements MessengerAdapter {
       isThread && !existingSession ? await this.fetchThreadContext(channelId, msgId) : undefined;
 
     // 3. Per-thread mutex.
-    await this.runWithMutex(threadKey, () =>
-      this.runRepoWorkInThread(ctx, repo, target, threadKey, threadContext),
-    );
+    await this.runWithMutex(threadKey, async () => {
+      if (fastMatch && (await this.tryFastRoute(fastMatch, ctx, repo, target))) return;
+      await this.runRepoWorkInThread(ctx, repo, target, threadKey, threadContext);
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Fast route — repo가 등록한 스크립트로 Claude 없이 즉답 (src/orchestrator/fast-route.ts)
+  // -------------------------------------------------------------------------
+
+  private async matchFastRoute(ctx: MessageContext, repo: RepoEntry): Promise<FastRouteMatch | null> {
+    const apiKey = this.config.env.TYPESAFE_API_KEY;
+    // 스크립트 실행이므로 owner 전용. 첨부·(btw)·빈 메시지는 Claude가 봐야 하는 요청.
+    if (!apiKey || ctx.authorId !== this.config.env.DISCORD_OWNER_USER_ID) return null;
+    const text = ctx.text.trim();
+    if (!text || text.startsWith('(btw)') || (ctx.attachments?.length ?? 0) > 0) return null;
+
+    const file = await loadRouteFile(repo.localPath);
+    if (!file) return null;
+
+    const started = Date.now();
+    try {
+      const answer = await askJev(text, file.routes, apiKey);
+      return { file, answer, route: pickRoute(answer, file), latencyMs: Date.now() - started };
+    } catch (err) {
+      return { file, answer: null, route: null, latencyMs: Date.now() - started, error: (err as Error).message };
+    }
+  }
+
+  /** true면 응답 완료. false면 호출자가 Claude 경로로 계속 진행. */
+  private async tryFastRoute(
+    pending: Promise<FastRouteMatch | null>,
+    ctx: MessageContext,
+    repo: RepoEntry,
+    target: TargetChannel,
+  ): Promise<boolean> {
+    const match = await pending;
+    if (!match) return false;
+
+    const channelLabel = ctx.channelName ?? ctx.channelId;
+    const apply = match.route !== null && match.file.mode === 'on';
+    logEvent(this.db, {
+      type: 'fastroute.match',
+      channel: channelLabel,
+      threadId: target.threadKey,
+      summary: match.error
+        ? `jev error: ${match.error}`
+        : `${match.answer?.choice} (${match.answer?.confidence}) → ${apply ? match.route?.name : 'claude'} ${match.latencyMs}ms`,
+      meta: {
+        repo: repo.fullName,
+        mode: match.file.mode,
+        choice: match.answer?.choice ?? null,
+        confidence: match.answer?.confidence ?? null,
+        route: match.route?.name ?? null,
+        applied: apply,
+        latencyMs: match.latencyMs,
+        error: match.error ?? null,
+      },
+    });
+    if (!apply || !match.route) return false;
+
+    const route = match.route;
+    const stopTyping = this.startTyping(target.channelId);
+    let result;
+    try {
+      result = await runRoute(route, repo.localPath);
+    } finally {
+      stopTyping();
+    }
+    if (!result.ok) {
+      log.warn({ route: route.name, repo: repo.fullName, err: result.error }, 'fast route failed — falling back to claude');
+      logEvent(this.db, {
+        type: 'fastroute.error',
+        channel: channelLabel,
+        threadId: target.threadKey,
+        summary: `${route.name}: ${result.error}`.slice(0, 500),
+        meta: { repo: repo.fullName, route: route.name, durationMs: result.durationMs },
+      });
+      return false;
+    }
+
+    const footer = `-# ⚡ fast route \`${route.name}\` · 판정 ${(match.latencyMs / 1000).toFixed(1)}s + 실행 ${(result.durationMs / 1000).toFixed(1)}s — 이어서 말하면 Claude가 받아요`;
+    const chunks = splitMessage(result.text, SAFE_CHUNK_SIZE);
+    chunks[chunks.length - 1] += '\n' + footer;
+    for (const chunk of chunks) {
+      try {
+        await this.safeSend(target.channelId, chunk);
+      } catch (err) {
+        log.error({ err: (err as Error).message, route: route.name }, 'fast route: failed to send chunk');
+        break;
+      }
+    }
+    const summary = result.text.slice(0, 500);
+    logEvent(this.db, {
+      type: 'discord.message.out',
+      channel: channelLabel,
+      threadId: target.threadKey,
+      summary,
+      meta: { mode: 'fast-route', route: route.name, matchMs: match.latencyMs, runMs: result.durationMs },
+    });
+    emitEvent({
+      ts: new Date().toISOString(),
+      type: 'discord.message.out',
+      channel: channelLabel,
+      threadId: target.threadKey,
+      summary,
+    });
+    return true;
   }
 
   private async runRepoWorkInThread(
