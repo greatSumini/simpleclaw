@@ -4,6 +4,8 @@ data/*.db
 data/*.db-shm
 data/*.db-wal
 data/router-scratch
+data/watchdog.offset
+data/watchdog.last_alert
 logs/
 .env
 .env.local
@@ -11,3 +13,6 @@ simpleclaw.config.json
 *.log
 .DS_Store
 .tsbuildinfo
+data/chrome-messages/
+data/team-registry.json
+data/heartbeat
