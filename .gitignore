@@ -16,3 +16,4 @@ simpleclaw.config.json
 data/chrome-messages/
 data/team-registry.json
 data/heartbeat
+data/gc-state.json

@@ -26,6 +26,10 @@ const EXPIRY_WARNING_MS = 30 * 60 * 1_000;
 
 export type Queue = (threadId: string, msg: string) => void;
 
+export interface AfterPollHook {
+  afterPoll(queue: Queue, ownerQueue: (msg: string) => void): Promise<void>;
+}
+
 /** Discord rejects messages over 2000 chars — and a rejected notice is a silent one. */
 const DISCORD_SAFE_LEN = 1_900;
 
@@ -95,6 +99,7 @@ export class BackgroundJobScheduler {
   private readonly notify: (threadId: string, msg: string) => Promise<void>;
   /** Owner-only channel (simpleclaw) for things that must not go to an unverified thread. */
   private readonly notifyOwner: ((msg: string) => Promise<void>) | undefined;
+  private readonly gc: AfterPollHook | undefined;
   private timer: NodeJS.Timeout | null = null;
   private running = false;
 
@@ -102,10 +107,12 @@ export class BackgroundJobScheduler {
     db: Database.Database,
     notify: (threadId: string, msg: string) => Promise<void>,
     notifyOwner?: (msg: string) => Promise<void>,
+    gc?: AfterPollHook,
   ) {
     this.db = db;
     this.notify = notify;
     this.notifyOwner = notifyOwner;
+    this.gc = gc;
   }
 
   start(): void {
@@ -180,8 +187,15 @@ export class BackgroundJobScheduler {
     }
   }
 
-  /** Hook for work that runs after every poll (the job GC plugs in here). */
-  protected async afterPoll(_queue: Queue, _ownerQueue: (msg: string) => void): Promise<void> {}
+  /** Work that runs after every poll — the job GC. Its failure must not break polling. */
+  private async afterPoll(queue: Queue, ownerQueue: (msg: string) => void): Promise<void> {
+    if (!this.gc) return;
+    try {
+      await this.gc.afterPoll(queue, ownerQueue);
+    } catch (err) {
+      log.error({ err: (err as Error).message }, 'background-jobs: gc pass crashed');
+    }
+  }
 
   private async pollJob(job: BackgroundJobRow, queue: Queue, ownerQueue: (msg: string) => void): Promise<void> {
     // Only jobs registered through claw-job (with a token issued for this very thread) may post.

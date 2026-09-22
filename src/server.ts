@@ -18,6 +18,7 @@ import { IMessageAdapter } from './adapters/imessage.js';
 import { GitHubIssueAdapter } from './adapters/github.js';
 import { RepoSyncScheduler } from './scheduler/repo-sync.js';
 import { BackgroundJobScheduler } from './scheduler/background-jobs.js';
+import { JobGarbageCollector, defaultGcStateFile } from './scheduler/job-gc.js';
 import { WikiScanScheduler } from './scheduler/wiki-scan.js';
 import { DailyDigestScheduler } from './scheduler/daily-digest.js';
 
@@ -140,6 +141,11 @@ async function main(): Promise<void> {
     db,
     (threadId, msg) => discord.postToChannel(threadId, msg),
     (msg) => discord.postToChannel(simpleclawOrGeneral, msg),
+    new JobGarbageCollector(db, {
+      stateFile: defaultGcStateFile(config.paths.dataDir),
+      // Dry-run until explicitly enabled: kills/deletes are only logged and summarised.
+      enforce: process.env['SIMPLECLAW_GC_ENFORCE'] === '1',
+    }),
   );
   backgroundJobs.start();
 

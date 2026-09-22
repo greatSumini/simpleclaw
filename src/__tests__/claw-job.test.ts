@@ -9,7 +9,8 @@ import { runMigrations } from '../state/migrations.js';
 import { getBackgroundJob } from '../state/background-jobs.js';
 import { issueRunToken, resolveRunToken, pruneRunTokens } from '../state/run-tokens.js';
 import { BackgroundJobScheduler } from '../scheduler/background-jobs.js';
-import { isSameProcessAlive } from '../scheduler/job-process.js';
+import { isSameProcessAlive, jobGroupMembers } from '../scheduler/job-process.js';
+import { JobGarbageCollector, parseEtime } from '../scheduler/job-gc.js';
 import { buildCommand, main, parseArgs, parseTtl, MIN_TTL_MS, MAX_TTL_MS, DEFAULT_TTL_MS } from '../cli/claw-job.js';
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -152,5 +153,93 @@ describe('claw-job end-to-end (real detached processes)', () => {
     const e = await main(['extend', String(id), '6h'], env);
     assert.equal(e.code, 0, e.out);
     assert.ok(Date.parse(getBackgroundJob(db, id)!.expiresAt) > before);
+  });
+});
+
+describe('job GC', () => {
+  let tmp: string;
+  let db: Database.Database;
+  let env: NodeJS.ProcessEnv;
+  const prevRoot = process.env['SIMPLECLAW_JOBS_ROOT'];
+
+  before(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'claw-gc-test-'));
+    process.env['SIMPLECLAW_JOBS_ROOT'] = path.join(tmp, 'jobs');
+    const dbFile = path.join(tmp, 'gc.db');
+    db = new Database(dbFile);
+    runMigrations(db);
+    env = {
+      SIMPLECLAW_RUN_TOKEN: issueRunToken(db, { threadId: 'gc-thread', repo: 'r', authorIsOwner: true }),
+      SIMPLECLAW_DB: dbFile,
+    };
+  });
+
+  after(() => {
+    // make sure nothing from these tests outlives them
+    for (const row of db.prepare('SELECT pid FROM background_jobs WHERE pid IS NOT NULL').all() as Array<{ pid: number }>) {
+      try {
+        process.kill(-row.pid, 'SIGKILL');
+      } catch {
+        // already gone
+      }
+    }
+    db.close();
+    if (prevRoot === undefined) delete process.env['SIMPLECLAW_JOBS_ROOT'];
+    else process.env['SIMPLECLAW_JOBS_ROOT'] = prevRoot;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  async function finishedJobWithLeftover(cmd: string): Promise<number> {
+    const r = await main(['run', '--desc', 'leftover', '--done', 'x', '--cwd', tmp, '--', cmd], env);
+    assert.equal(r.code, 0, r.out);
+    const id = Number(r.out.match(/job #(\d+)/)![1]);
+    await waitFor(() => fs.existsSync(path.join(getBackgroundJob(db, id)!.jobDir!, 'exit')));
+    return id;
+  }
+
+  test('parseEtime', () => {
+    assert.equal(parseEtime('05:03'), 303_000);
+    assert.equal(parseEtime('02:00:00'), 7_200_000);
+    assert.equal(parseEtime('3-01:00:00'), (3 * 24 + 1) * 3_600_000);
+  });
+
+  test('dry-run: leftover process is reported once, never killed', async () => {
+    const id = await finishedJobWithLeftover('sleep 300 & exit 0');
+    const gc = new JobGarbageCollector(db, { stateFile: path.join(tmp, 'gc-dry.json'), enforce: false });
+    const sent: string[] = [];
+    const s = new BackgroundJobScheduler(db, async (_t, m) => void sent.push(m), async () => {}, gc);
+    await s.pollOnce();
+    await s.pollOnce();
+    const job = getBackgroundJob(db, id)!;
+    assert.equal(job.status, 'done');
+    assert.equal(job.reaped, false);
+    assert.ok(jobGroupMembers(job.pid!, job.procStartedAt).length > 0, 'leftover must still be alive');
+    assert.equal(sent.filter((m) => m.includes('dry-run')).length, 1);
+    process.kill(-job.pid!, 'SIGKILL');
+  });
+
+  test('enforce: leftover process group is killed and reported', async () => {
+    const id = await finishedJobWithLeftover('sleep 300 & exit 0');
+    const gc = new JobGarbageCollector(db, { stateFile: path.join(tmp, 'gc-on.json'), enforce: true });
+    const sent: string[] = [];
+    const owner: string[] = [];
+    await new BackgroundJobScheduler(db, async (_t, m) => void sent.push(m), async (m) => void owner.push(m), gc).pollOnce();
+    const job = getBackgroundJob(db, id)!;
+    assert.equal(job.reaped, true);
+    await waitFor(() => jobGroupMembers(job.pid!, job.procStartedAt).length === 0);
+    assert.match(sent.join('\n'), /남은 프로세스 1개를 종료/);
+    assert.match(owner.join('\n'), /GC kill/);
+  });
+
+  test('enforce: a group with a browser-like process is left alone and reported', async () => {
+    const id = await finishedJobWithLeftover("bash -c 'exec -a fake-chrome-helper sleep 300' & exit 0");
+    const gc = new JobGarbageCollector(db, { stateFile: path.join(tmp, 'gc-on2.json'), enforce: true });
+    const sent: string[] = [];
+    await new BackgroundJobScheduler(db, async (_t, m) => void sent.push(m), async () => {}, gc).pollOnce();
+    const job = getBackgroundJob(db, id)!;
+    assert.equal(job.reaped, true);
+    assert.ok(jobGroupMembers(job.pid!, job.procStartedAt).length > 0, 'browser-like process must survive');
+    assert.match(sent.join('\n'), /자동 정리를 보류/);
+    process.kill(-job.pid!, 'SIGKILL');
   });
 });
