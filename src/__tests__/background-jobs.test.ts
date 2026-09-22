@@ -6,7 +6,8 @@ import Database from 'better-sqlite3';
 
 import { runMigrations } from '../state/migrations.js';
 import { parseDbUtc, getPendingBackgroundJobs } from '../state/background-jobs.js';
-import { BackgroundJobScheduler, classifyCheckFailure } from '../scheduler/background-jobs.js';
+import { issueRunToken } from '../state/run-tokens.js';
+import { BackgroundJobScheduler, classifyCheckFailure, packMessages } from '../scheduler/background-jobs.js';
 import { formatEngineFailure } from '../adapters/discord.js';
 
 function freshDb(): Database.Database {
@@ -17,14 +18,17 @@ function freshDb(): Database.Database {
 
 function insertJob(
   db: Database.Database,
-  fields: { checkCmd: string; cwd?: string; expiresAt: string; createdAt?: string; threadId?: string },
+  fields: { checkCmd: string; cwd?: string; expiresAt: string; createdAt?: string; threadId?: string; token?: string | null },
 ): number {
+  const threadId = fields.threadId ?? 't1';
+  const token =
+    fields.token === undefined ? issueRunToken(db, { threadId, repo: 'test/repo', authorIsOwner: true }) : fields.token;
   const r = db
     .prepare(
-      `INSERT INTO background_jobs (thread_id, description, check_cmd, cwd, done_message, created_at, expires_at)
-       VALUES (?, 'desc', ?, ?, 'DONE', ?, ?)`,
+      `INSERT INTO background_jobs (thread_id, description, check_cmd, cwd, done_message, created_at, expires_at, run_token)
+       VALUES (?, 'desc', ?, ?, 'DONE', ?, ?, ?)`,
     )
-    .run(fields.threadId ?? 't1', fields.checkCmd, fields.cwd ?? os.tmpdir(), fields.createdAt ?? new Date().toISOString(), fields.expiresAt);
+    .run(threadId, fields.checkCmd, fields.cwd ?? os.tmpdir(), fields.createdAt ?? new Date().toISOString(), fields.expiresAt, token);
   return Number(r.lastInsertRowid);
 }
 
@@ -67,13 +71,36 @@ describe('BackgroundJobScheduler.pollOnce', () => {
 
   test('a job registered with SQLite datetime() format is checked, not insta-expired', async () => {
     const db = freshDb();
+    const token = issueRunToken(db, { threadId: 't1', repo: 'r', authorIsOwner: true });
     db.prepare(
-      `INSERT INTO background_jobs (thread_id, description, check_cmd, cwd, done_message, created_at, expires_at)
-       VALUES ('t1', 'd', 'true', ?, 'DONE', datetime('now'), datetime('now', '+2 hours'))`,
-    ).run(os.tmpdir());
+      `INSERT INTO background_jobs (thread_id, description, check_cmd, cwd, done_message, created_at, expires_at, run_token)
+       VALUES ('t1', 'd', 'true', ?, 'DONE', datetime('now'), datetime('now', '+2 hours'), ?)`,
+    ).run(os.tmpdir(), token);
     const sent: string[] = [];
     await new BackgroundJobScheduler(db, async (_t, m) => void sent.push(m)).pollOnce();
-    assert.deepEqual(sent, ['DONE']);
+    assert.equal(sent.length, 1);
+    assert.match(sent[0]!, /완료 — DONE/);
+  });
+
+  test('raw INSERT without a token is refused and reported to the owner, not the thread', async () => {
+    const db = freshDb();
+    const id = insertJob(db, { checkCmd: 'true', expiresAt: future(), token: null });
+    const sent: string[] = [];
+    const owner: string[] = [];
+    await new BackgroundJobScheduler(db, async (_t, m) => void sent.push(m), async (m) => void owner.push(m)).pollOnce();
+    assert.equal(status(db, id), 'failed');
+    assert.equal(sent.length, 0);
+    assert.match(owner[0]!, /토큰 없이/);
+  });
+
+  test("a token issued for another thread can't be used to post here", async () => {
+    const db = freshDb();
+    const other = issueRunToken(db, { threadId: 'other-thread', repo: 'r', authorIsOwner: false });
+    const id = insertJob(db, { checkCmd: 'true', expiresAt: future(), token: other });
+    const sent: string[] = [];
+    await new BackgroundJobScheduler(db, async (_t, m) => void sent.push(m), async () => {}).pollOnce();
+    assert.equal(status(db, id), 'failed');
+    assert.equal(sent.length, 0);
   });
 
   test('done → status done + done_message posted', async () => {
@@ -82,7 +109,9 @@ describe('BackgroundJobScheduler.pollOnce', () => {
     const sent: Array<[string, string]> = [];
     await new BackgroundJobScheduler(db, async (t, m) => void sent.push([t, m])).pollOnce();
     assert.equal(status(db, id), 'done');
-    assert.deepEqual(sent, [['t1', 'DONE']]);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0]![0], 't1');
+    assert.match(sent[0]![1], new RegExp(`job #${id} 완료 — DONE`));
   });
 
   test('not-yet stays pending silently and counts attempts', async () => {
@@ -122,7 +151,7 @@ describe('BackgroundJobScheduler.pollOnce', () => {
     const sent: string[] = [];
     await new BackgroundJobScheduler(db, async (_t, m) => void sent.push(m)).pollOnce();
     assert.equal(status(db, id), 'expired');
-    assert.match(sent[0]!, /시간 초과/);
+    assert.match(sent[0]!, /만료 — 완료를 확인하지 못했습니다/);
   });
 
   test('several jobs finishing in one poll → one message per thread', async () => {
@@ -134,6 +163,17 @@ describe('BackgroundJobScheduler.pollOnce', () => {
     await new BackgroundJobScheduler(db, async (t, m) => void sent.push([t, m])).pollOnce();
     assert.equal(sent.length, 2);
     assert.equal(getPendingBackgroundJobs(db).length, 0);
+  });
+});
+
+describe('packMessages', () => {
+  test('joins small messages into one post', () => {
+    assert.deepEqual(packMessages(['a', 'b']), ['a\n\nb']);
+  });
+  test('never produces a post over the Discord limit', () => {
+    const posts = packMessages(['x'.repeat(1500), 'y'.repeat(1500), 'z'.repeat(5000)]);
+    assert.equal(posts.length, 3);
+    for (const p of posts) assert.ok(p.length <= 1900);
   });
 });
 

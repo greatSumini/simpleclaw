@@ -2,6 +2,7 @@ import { spawn, execFile } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import type Database from 'better-sqlite3';
 
@@ -17,6 +18,7 @@ import { emitEvent } from '../dashboard/event-bus.js';
 import { routeMessage } from '../orchestrator/router.js';
 import { isMemoMessage } from '../orchestrator/memo.js';
 import { getPendingBackgroundJobsForThread } from '../state/background-jobs.js';
+import { issueRunToken } from '../state/run-tokens.js';
 import {
   buildRepoWorkSystemAppend,
   buildSimpleClawMaintenanceSystemAppend,
@@ -93,6 +95,8 @@ const DISCORD_MESSAGE_HARD_LIMIT = 2000;
 const SAFE_CHUNK_SIZE = 1900; // headroom for the [i/N]\n prefix
 const THREAD_NAME_MAX = 90; // Discord limit is 100; leave headroom
 const CLAUDE_TIMEOUT_MS = 3_600_000; // 1 hour
+/** Absolute path of the claw-job launcher (repo/bin), resolved from dist/adapters/. */
+const CLAW_JOB_CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'bin', 'claw-job');
 
 // ---------------------------------------------------------------------------
 // Helpers (exported for shape testing)
@@ -500,6 +504,24 @@ export class DiscordAdapter implements MessengerAdapter {
     );
   }
 
+  /**
+   * Env for an engine run: a fresh claw-job token bound to this thread, plus where the CLI and
+   * DB live. Failing to issue a token must not block the run — the session just can't register
+   * follow-ups (and claw-job says so loudly), which is the pre-claw-job behaviour.
+   */
+  private engineEnv(threadKey: string, repo: string, authorIsOwner: boolean): Record<string, string> {
+    try {
+      return {
+        SIMPLECLAW_RUN_TOKEN: issueRunToken(this.db, { threadId: threadKey, repo, authorIsOwner }),
+        SIMPLECLAW_JOB_CLI: CLAW_JOB_CLI,
+        SIMPLECLAW_DB: this.config.paths.dbFile,
+      };
+    } catch (err) {
+      log.warn({ err: (err as Error).message, threadId: threadKey }, 'engineEnv: run token issue failed');
+      return {};
+    }
+  }
+
   /** Post the cancellation notice + log events after an aborted engine run. */
   private async notifyCancelled(
     channelLabel: string,
@@ -822,6 +844,7 @@ export class DiscordAdapter implements MessengerAdapter {
             resume: resumeId,
             signal: controller.signal,
             timeoutMs: CLAUDE_TIMEOUT_MS,
+            env: this.engineEnv(threadKey, repo.fullName, ctx.authorId === this.config.env.DISCORD_OWNER_USER_ID),
           });
         }
       } catch (err) {
@@ -1068,6 +1091,7 @@ export class DiscordAdapter implements MessengerAdapter {
           resume: resumeId,
           signal: controller.signal,
           timeoutMs: CLAUDE_TIMEOUT_MS,
+          env: this.engineEnv(threadKey, 'simpleclaw', ctx.authorId === this.config.env.DISCORD_OWNER_USER_ID),
         });
       } catch (err) {
         if (controller.signal.aborted) {
@@ -1502,6 +1526,7 @@ export class DiscordAdapter implements MessengerAdapter {
           resume: resumeId,
           signal: controller.signal,
           timeoutMs: CLAUDE_TIMEOUT_MS,
+          env: this.engineEnv(threadKey, 'root', true), // root channel is owner-only (router-verified)
         });
       } catch (err) {
         if (controller.signal.aborted) {

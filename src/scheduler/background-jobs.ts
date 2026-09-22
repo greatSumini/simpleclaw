@@ -5,10 +5,14 @@ import { log } from '../log.js';
 import {
   type BackgroundJobRow,
   getPendingBackgroundJobs,
+  markBackgroundJobExpiryWarned,
+  markBackgroundJobReaped,
   markBackgroundJobStatus,
   parseDbUtc,
   recordBackgroundJobCheck,
 } from '../state/background-jobs.js';
+import { tokenBelongsToThread } from '../state/run-tokens.js';
+import { readExitCode, tailLog } from './job-process.js';
 
 const execAsync = promisify(exec);
 
@@ -17,6 +21,40 @@ const CHECK_TIMEOUT_MS = 30 * 1_000;
 const CHECK_CONCURRENCY = 3;
 /** Consecutive "the check itself is broken" results before we tell the thread. */
 const BROKEN_STREAK_THRESHOLD = 3;
+/** Heads-up before a detached job's TTL runs out, so it can be extended instead of cut off. */
+const EXPIRY_WARNING_MS = 30 * 60 * 1_000;
+
+export type Queue = (threadId: string, msg: string) => void;
+
+/** Discord rejects messages over 2000 chars — and a rejected notice is a silent one. */
+const DISCORD_SAFE_LEN = 1_900;
+
+/** Pack messages into as few posts as possible, each under Discord's limit. */
+export function packMessages(msgs: string[]): string[] {
+  const posts: string[] = [];
+  let cur = '';
+  for (const raw of msgs) {
+    const m = raw.length > DISCORD_SAFE_LEN ? `${raw.slice(0, DISCORD_SAFE_LEN - 1)}…` : raw;
+    if (cur && cur.length + 2 + m.length > DISCORD_SAFE_LEN) {
+      posts.push(cur);
+      cur = m;
+    } else {
+      cur = cur ? `${cur}\n\n${m}` : m;
+    }
+  }
+  if (cur) posts.push(cur);
+  return posts;
+}
+
+/** Last lines of a job log, each clipped, fenced for Discord. */
+function fencedTail(jobDir: string, lines: number): string {
+  const tail = tailLog(jobDir, lines)
+    .split('\n')
+    .map((l) => (l.length > 160 ? `${l.slice(0, 159)}…` : l))
+    .join('\n')
+    .replace(/```/g, "'''");
+  return tail ? `\n\`\`\`\n${tail}\n\`\`\`` : '';
+}
 
 export type CheckOutcome =
   | { kind: 'done' }
@@ -55,12 +93,19 @@ export function classifyCheckFailure(err: unknown): CheckOutcome {
 export class BackgroundJobScheduler {
   private readonly db: Database.Database;
   private readonly notify: (threadId: string, msg: string) => Promise<void>;
+  /** Owner-only channel (simpleclaw) for things that must not go to an unverified thread. */
+  private readonly notifyOwner: ((msg: string) => Promise<void>) | undefined;
   private timer: NodeJS.Timeout | null = null;
   private running = false;
 
-  constructor(db: Database.Database, notify: (threadId: string, msg: string) => Promise<void>) {
+  constructor(
+    db: Database.Database,
+    notify: (threadId: string, msg: string) => Promise<void>,
+    notifyOwner?: (msg: string) => Promise<void>,
+  ) {
     this.db = db;
     this.notify = notify;
+    this.notifyOwner = notifyOwner;
   }
 
   start(): void {
@@ -96,39 +141,86 @@ export class BackgroundJobScheduler {
   }
 
   private async run(): Promise<void> {
-    const jobs = getPendingBackgroundJobs(this.db);
-    if (jobs.length === 0) return;
-
     // Messages are collected per thread and flushed once, so several jobs finishing in the
     // same poll produce one post instead of a burst.
     const outbox = new Map<string, string[]>();
-    const queue = (threadId: string, msg: string): void => {
+    const queue: Queue = (threadId, msg) => {
       const list = outbox.get(threadId) ?? [];
       list.push(msg);
       outbox.set(threadId, list);
     };
+    const ownerOutbox: string[] = [];
 
+    const jobs = getPendingBackgroundJobs(this.db);
     for (let i = 0; i < jobs.length; i += CHECK_CONCURRENCY) {
-      await Promise.all(jobs.slice(i, i + CHECK_CONCURRENCY).map((job) => this.pollJob(job, queue)));
+      await Promise.all(
+        jobs.slice(i, i + CHECK_CONCURRENCY).map((job) => this.pollJob(job, queue, (m) => ownerOutbox.push(m))),
+      );
     }
 
+    await this.afterPoll(queue, (m) => ownerOutbox.push(m));
+
     for (const [threadId, msgs] of outbox) {
-      await this.notify(threadId, msgs.join('\n\n')).catch((err) =>
-        log.error({ err: (err as Error).message, threadId }, 'background-jobs: notify failed'),
-      );
+      for (const post of packMessages(msgs)) {
+        await this.notify(threadId, post).catch((err) =>
+          log.error({ err: (err as Error).message, threadId }, 'background-jobs: notify failed'),
+        );
+      }
+    }
+    if (ownerOutbox.length > 0) {
+      if (this.notifyOwner) {
+        for (const post of packMessages(ownerOutbox)) {
+          await this.notifyOwner(post).catch((err) =>
+            log.error({ err: (err as Error).message }, 'background-jobs: owner notify failed'),
+          );
+        }
+      } else {
+        log.warn({ messages: ownerOutbox }, 'background-jobs: owner notice with no owner channel');
+      }
     }
   }
 
-  private async pollJob(job: BackgroundJobRow, queue: (threadId: string, msg: string) => void): Promise<void> {
+  /** Hook for work that runs after every poll (the job GC plugs in here). */
+  protected async afterPoll(_queue: Queue, _ownerQueue: (msg: string) => void): Promise<void> {}
+
+  private async pollJob(job: BackgroundJobRow, queue: Queue, ownerQueue: (msg: string) => void): Promise<void> {
+    // Only jobs registered through claw-job (with a token issued for this very thread) may post.
+    // A raw INSERT can name any thread — that's how any session could have written into any
+    // thread — so it's refused, and the owner (not the named thread) is told.
+    if (!job.runToken || !tokenBelongsToThread(this.db, job.runToken, job.threadId)) {
+      markBackgroundJobStatus(this.db, job.id, 'failed');
+      markBackgroundJobReaped(this.db, job.id);
+      ownerQueue(
+        `🚫 토큰 없이 등록된 백그라운드 작업 #${job.id}을 거부했습니다 (대상 스레드 <#${job.threadId}>, "${job.description}"). ` +
+          '이제 claw-job CLI로만 등록할 수 있습니다 — 레포 플레이북/스킬에 sqlite INSERT 안내가 남아 있다면 교체가 필요합니다.',
+      );
+      return;
+    }
+
     const expiresAt = parseDbUtc(job.expiresAt);
     if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
       markBackgroundJobStatus(this.db, job.id, 'expired');
-      const reason = job.lastError ? `\n마지막 확인 결과: ${job.lastError}` : '';
+      if (job.jobDir) {
+        queue(
+          job.threadId,
+          `⏱️ job #${job.id} 만료 — 끝나지 않은 채 제한 시간을 넘겼습니다: ${job.description}${fencedTail(job.jobDir, 8)}`,
+        );
+      } else {
+        const reason = job.lastError ? `\n마지막 확인 결과: ${job.lastError}` : '';
+        queue(
+          job.threadId,
+          `⏱️ job #${job.id} 만료 — 완료를 확인하지 못했습니다: ${job.description}\n(조건: \`${job.checkCmd}\`)${reason}`,
+        );
+      }
+      return;
+    }
+
+    if (job.jobDir && !job.expiryWarned && expiresAt - Date.now() <= EXPIRY_WARNING_MS) {
+      markBackgroundJobExpiryWarned(this.db, job.id);
       queue(
         job.threadId,
-        `⏱️ 백그라운드 작업 시간 초과 — 완료를 확인하지 못했습니다: ${job.description}\n(조건: \`${job.checkCmd}\`)${reason}`,
+        `⏳ job #${job.id} "${job.description}"이 30분 안에 만료됩니다. 아직 끝나지 않았고, 만료되면 종료 대상이 됩니다 — 더 필요하면 이 스레드에 "연장해줘"라고 해주세요.`,
       );
-      return;
     }
 
     let outcome: CheckOutcome;
@@ -140,8 +232,14 @@ export class BackgroundJobScheduler {
     }
 
     if (outcome.kind === 'done') {
+      const exit = job.jobDir ? readExitCode(job.jobDir) : null;
+      if (exit !== null && exit !== 0) {
+        markBackgroundJobStatus(this.db, job.id, 'failed');
+        queue(job.threadId, `❌ job #${job.id} 실패 (exit ${exit}): ${job.description}${fencedTail(job.jobDir!, 15)}`);
+        return;
+      }
       markBackgroundJobStatus(this.db, job.id, 'done');
-      queue(job.threadId, job.doneMessage);
+      queue(job.threadId, `✅ job #${job.id} 완료 — ${job.doneMessage}`);
       return;
     }
 

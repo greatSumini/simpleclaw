@@ -136,8 +136,10 @@ async function main(): Promise<void> {
 
   // Background jobs: polls objectively-checkable completion conditions Claude
   // registers mid-session, notifies the originating thread once done (no LLM call in the loop).
-  const backgroundJobs = new BackgroundJobScheduler(db, (threadId, msg) =>
-    discord.postToChannel(threadId, msg),
+  const backgroundJobs = new BackgroundJobScheduler(
+    db,
+    (threadId, msg) => discord.postToChannel(threadId, msg),
+    (msg) => discord.postToChannel(simpleclawOrGeneral, msg),
   );
   backgroundJobs.start();
 

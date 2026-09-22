@@ -1,0 +1,5 @@
+#!/bin/sh
+# Thin launcher for the compiled CLI (dist/cli/claw-job.js). Engine sessions reach it through
+# $SIMPLECLAW_JOB_CLI, which the worker sets to this file's absolute path.
+here=$(cd "$(dirname "$0")" && pwd)
+exec node "$here/../dist/cli/claw-job.js" "$@"

@@ -355,6 +355,30 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE background_jobs ADD COLUMN last_error TEXT;
     `,
   },
+  {
+    // claw-job: jobs are registered through a CLI that proves which thread it belongs to with a
+    // per-run token (issued by the worker right before spawning the engine), instead of a raw
+    // INSERT where the model had to guess its own thread id and the DB path. Detached `run`
+    // jobs also record their process (pid + start time, for identity-checked cleanup) and the
+    // job directory holding the command, its log and its exit code.
+    name: '020_claw_job',
+    sql: `
+      CREATE TABLE IF NOT EXISTS run_tokens (
+        token            TEXT PRIMARY KEY,
+        thread_id        TEXT NOT NULL,
+        repo             TEXT NOT NULL,
+        author_is_owner  INTEGER NOT NULL DEFAULT 0,
+        created_at       TEXT NOT NULL,
+        expires_at       TEXT NOT NULL
+      );
+      ALTER TABLE background_jobs ADD COLUMN run_token TEXT;
+      ALTER TABLE background_jobs ADD COLUMN pid INTEGER;
+      ALTER TABLE background_jobs ADD COLUMN proc_started_at TEXT;
+      ALTER TABLE background_jobs ADD COLUMN job_dir TEXT;
+      ALTER TABLE background_jobs ADD COLUMN expiry_warned INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE background_jobs ADD COLUMN reaped INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

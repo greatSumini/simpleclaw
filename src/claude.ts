@@ -23,6 +23,8 @@ export interface ClaudeRunOptions {
   signal?: AbortSignal;
   /** Hard timeout in ms. Default 600_000 (10 min). */
   timeoutMs?: number;
+  /** Extra env vars for the engine process (e.g. SIMPLECLAW_RUN_TOKEN for claw-job). */
+  env?: Record<string, string>;
 }
 
 export interface ClaudeRunResult {
@@ -392,7 +394,7 @@ export function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
     return await new Promise<ClaudeRunResult>((resolve, reject) => {
       const proc = spawn(getClaudeBin(), args, {
         cwd: opts.cwd,
-        env: process.env,
+        env: opts.env ? { ...process.env, ...opts.env } : process.env,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 

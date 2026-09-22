@@ -19,15 +19,12 @@ function formatAuthorLine(authorIsOwner: boolean | undefined): string {
 }
 
 export const NO_ASYNC_PROMISE_INSTRUCTION =
-  '이 세션은 완전히 동기적으로 실행되며, 응답을 보낸 후 이 프로세스 자체가 백그라운드에서 계속 작업할 방법은 없다. ' +
-  '"다 되면 알려드릴게요"처럼 막연히 약속하지 말 것 — 완료 조건이 셸 명령 하나로 참/거짓 판정 가능한 객관적 조건(빌드 성공, PR merged, HTTP 200 등)일 때만 ' +
-  '아래 background_jobs 등록으로 실제 후속 알림을 걸 수 있다. 그 외의 경우(사람의 판단이 필요한 완료 조건)는 이번 턴 안에서 끝까지 마치고 보고하거나, ' +
-  '못 끝냈으면 그 사실과 남은 작업을 지금 응답에 명시할 것.\n' +
-  '  후속 알림이 필요하고 완료 조건이 객관적으로 체크 가능하면, 이 턴 안에서 다음처럼 등록하라 (폴링은 5분 간격, 등록만 하면 SimpleClaw가 알아서 감지·통보한다):\n' +
-  '  `sqlite3 data/simpleclaw.db "INSERT INTO background_jobs (thread_id, description, check_cmd, cwd, done_message, created_at, expires_at) ' +
-  'VALUES (\'<이 스레드 ID>\', \'<한 줄 설명>\', \'<exit 0 이면 완료로 판정되는 셸 명령>\', \'<명령 실행 cwd 절대경로>\', \'<완료 시 스레드에 보낼 메시지>\', ' +
-  "datetime('now'), datetime('now', '+<N> hours'))\"`\n" +
-  '  등록 후 응답에는 "완료되면 알려드릴게요" 대신 "완료 조건을 등록했습니다 — 충족되면 자동으로 알려드립니다" 같이 실제로 지켜지는 표현만 쓸 것.';
+  '이 세션은 동기 실행이다 — 응답을 보내면 너는 더 이상 실행되지 않고, 셸에서 띄운 프로세스(nohup·& 포함)도 세션과 함께 죽을 수 있다. ' +
+  '"완료되면 알려드릴게요/이어가겠습니다/대기하겠습니다"는 아래 claw-job으로 등록해 job 번호를 받았을 때만 쓸 것. 그 외에는 이번 턴 안에 끝내거나, 못 끝낸 것과 남은 작업을 명시하라.\n' +
+  '  - 오래 걸리는 명령(렌더링·전사·대량 처리): `"$SIMPLECLAW_JOB_CLI" run --desc "<설명>" --done "<완료 시 스레드에 보낼 메시지>" -- "<bash 명령>"` — 세션과 분리 실행, 끝나면 성공/실패(로그 포함)를 이 스레드에 자동 알림.\n' +
+  '  - 외부 조건 대기(파일 생성·PR merge·HTTP 200 등): `"$SIMPLECLAW_JOB_CLI" watch --desc "<설명>" --check "<exit 0이면 완료인 명령>" --done "<메시지>"`\n' +
+  '  - 관리: `list` / `status <id>` / `extend <id> 6h` / `cancel <id>` (기본 만료 12h, 최소 2h). 직접 sqlite INSERT는 거부된다.\n' +
+  '  - 등록 출력(✅ job #N)을 확인한 뒤에만 "job #N으로 등록했습니다 — 끝나면 자동으로 알려드립니다"라고 쓸 것.';
 
 export const ARTIFACT_INSTRUCTION =
   '파일(PDF, HTML 등)이나 URL을 산출물로 생성했을 경우 응답 끝에 다음 형식으로 표시 (SimpleClaw가 해당 파일/링크를 Discord에 직접 첨부):\n' +
@@ -36,12 +33,12 @@ export const ARTIFACT_INSTRUCTION =
 
 const BASE_LINES = [
   '한국어로 응답',
+  NO_ASYNC_PROMISE_INSTRUCTION,
   '작업 끝나면 의미 단위로 git commit & push까지 완수. 첫 push 시 `gh auth setup-git` 먼저 (idempotent, GH_TOKEN 자동 인식). 실패 시 강행 금지(-f X), 보고만.',
   'WebFetch 실패(차단·타임아웃·비정상 응답) 시 사용자 재지시 없이 즉시 우회: `curl -A "Mozilla/5.0" <url>` → RSS feed(`https://rss.{domain}/{id}.xml` 또는 `{url}/feed`) → WebSearch 순으로 자동 시도. 우회 성공 시 결과를 그대로 활용하고 별도 실패 보고 없음.',
   '최종 답변은 핵심만 간결히 (Discord에 그대로 전달됨, 2000자 이상 시 자동 분할됨). 단, 복수의 문의·건(B2B, 고객, 메일 등)을 보고할 때는 각 건마다 채널·수신 시각·연락처·문의 원문을 생략 없이 포함.',
   '디스커버리 콜·미팅 초대·인터뷰 등 일정을 잡는 이메일 발송 완료 후에는 반드시 "통화/미팅 시간 확정 시 캘린더 일정도 바로 만들어드릴 수 있습니다"를 안내.',
   '이메일 초안 제시 후에는 마지막 줄에 "발송할까요? (ㄱㄱ / 수정 요청)" 한 줄을 반드시 포함.',
-  NO_ASYNC_PROMISE_INSTRUCTION,
   ARTIFACT_INSTRUCTION,
 ];
 
@@ -176,6 +173,7 @@ export function buildRootSystemAppend(args: RootPromptArgs): string {
   const lines: string[] = [];
   lines.push('지시:');
   lines.push('- 한국어로 응답');
+  lines.push(`- ${NO_ASYNC_PROMISE_INSTRUCTION}`);
   lines.push(
     '- 이 세션은 root 채널 — 특정 repo에 종속되지 않는 머신 전역 작업용. cwd는 홈 디렉토리($HOME). 어떤 파일/디렉토리든 작업 가능.',
   );
@@ -183,7 +181,6 @@ export function buildRootSystemAppend(args: RootPromptArgs): string {
     '- 이 채널 접근은 라우터 단계에서 이미 검증된 owner 전용 (Discord authorId 기반). 별도 신원 확인 불필요.',
   );
   lines.push('- 최종 답변은 핵심만 간결히 (Discord에 그대로 전달됨, 2000자 이상 시 자동 분할됨)');
-  lines.push(`- ${NO_ASYNC_PROMISE_INSTRUCTION}`);
   lines.push(`- ${ARTIFACT_INSTRUCTION}`);
   if (args.isContinuation) {
     lines.push('- (이전 대화 이어가기 모드 — 같은 thread 안에서의 후속 메시지)');
@@ -204,6 +201,7 @@ export function buildSimpleClawMaintenanceSystemAppend(
   const lines: string[] = [];
   lines.push('지시:');
   lines.push('- 한국어로 응답');
+  lines.push(`- ${NO_ASYNC_PROMISE_INSTRUCTION}`);
   lines.push(
     '- 이 세션은 SimpleClaw 자체 유지보수 전용. cwd는 SimpleClaw repo (`greatSumini/simpleclaw`). 다른 repo 작업 필요해 보이면 사용자에게 안내만.',
   );
@@ -219,7 +217,6 @@ export function buildSimpleClawMaintenanceSystemAppend(
   lines.push(
     '- 완료 메시지 끝에 재시작 여부를 반드시 명시: "재시작: 트리거됨" 또는 "재시작: 불필요 (문서/테스트만 변경)"',
   );
-  lines.push(`- ${NO_ASYNC_PROMISE_INSTRUCTION}`);
   lines.push(`- ${ARTIFACT_INSTRUCTION}`);
   if (args.isContinuation) {
     lines.push('- (이전 대화 이어가기 모드 — 같은 thread 안에서의 후속 메시지)');
