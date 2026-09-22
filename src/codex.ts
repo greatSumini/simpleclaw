@@ -41,6 +41,8 @@ export interface CodexRunResult {
   contextWindowMax: number;
   /** Always 0 — codex does not expose cost. */
   costUsd: number;
+  /** Never set — codex does not expose Claude subscription quota. */
+  rateLimits?: undefined;
 }
 
 export class CodexError extends Error {

@@ -934,11 +934,12 @@ export class DiscordAdapter implements MessengerAdapter {
         contextWindowMax: result.contextWindowMax,
         costUsd: result.costUsd,
       });
-      const usageFooter = buildUsageFooter(this.db, {
+      const usageFooter = buildUsageFooter({
         sessionId: result.sessionId,
         contextWindowUsed: result.contextWindowUsed,
         contextWindowMax: result.contextWindowMax,
         costUsd: result.costUsd,
+        rateLimits: result.rateLimits,
       });
 
       const chunks = splitMessage(this.guardPromise(result.text, threadKey, channelLabel), SAFE_CHUNK_SIZE);
@@ -1196,11 +1197,12 @@ export class DiscordAdapter implements MessengerAdapter {
         contextWindowMax: result.contextWindowMax,
         costUsd: result.costUsd,
       });
-      const clawUsageFooter = buildUsageFooter(this.db, {
+      const clawUsageFooter = buildUsageFooter({
         sessionId: result.sessionId,
         contextWindowUsed: result.contextWindowUsed,
         contextWindowMax: result.contextWindowMax,
         costUsd: result.costUsd,
+        rateLimits: result.rateLimits,
       });
 
       const chunks = splitMessage(this.guardPromise(visibleText, threadKey, channelLabel), SAFE_CHUNK_SIZE);
@@ -1420,11 +1422,12 @@ export class DiscordAdapter implements MessengerAdapter {
         contextWindowMax: result.contextWindowMax,
         costUsd: result.costUsd,
       });
-      const footer = buildUsageFooter(this.db, {
+      const footer = buildUsageFooter({
         sessionId: result.sessionId,
         contextWindowUsed: result.contextWindowUsed,
         contextWindowMax: result.contextWindowMax,
         costUsd: result.costUsd,
+        rateLimits: result.rateLimits,
       });
 
       const chunks = splitMessage(result.text, SAFE_CHUNK_SIZE);
@@ -1614,11 +1617,12 @@ export class DiscordAdapter implements MessengerAdapter {
         contextWindowMax: result.contextWindowMax,
         costUsd: result.costUsd,
       });
-      const usageFooter = buildUsageFooter(this.db, {
+      const usageFooter = buildUsageFooter({
         sessionId: result.sessionId,
         contextWindowUsed: result.contextWindowUsed,
         contextWindowMax: result.contextWindowMax,
         costUsd: result.costUsd,
+        rateLimits: result.rateLimits,
       });
 
       const chunks = splitMessage(this.guardPromise(result.text, threadKey, channelLabel), SAFE_CHUNK_SIZE);

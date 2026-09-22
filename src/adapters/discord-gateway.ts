@@ -804,11 +804,12 @@ export class DiscordGatewayAdapter implements MailAlertPoster {
         contextWindowMax: result.contextWindowMax,
         costUsd: result.costUsd,
       });
-      const footer = buildUsageFooter(this.db, {
+      const footer = buildUsageFooter({
         sessionId: result.sessionId,
         contextWindowUsed: result.contextWindowUsed,
         contextWindowMax: result.contextWindowMax,
         costUsd: result.costUsd,
+        rateLimits: result.rateLimits,
       });
 
       const chunks = splitMessage(result.text, SAFE_CHUNK_SIZE);

@@ -42,8 +42,26 @@ export interface ClaudeRunResult {
   contextWindowUsed: number;
   /** Model's max context window size. */
   contextWindowMax: number;
-  /** Total API cost for this invocation in USD. */
+  /**
+   * `total_cost_usd` from the CLI result. NOT reliably per-invocation: on `--resume` the CLI
+   * sometimes carries the session's earlier cost forward and sometimes doesn't (observed
+   * turn-by-turn within the same session), so summing it over-counts by an unknown amount.
+   */
   costUsd: number;
+  /** Account-wide subscription quota utilization from the last `rate_limit_event`, if emitted. */
+  rateLimits?: RateLimitSnapshot;
+}
+
+export interface RateLimitWindow {
+  /** 0..1 fraction of the window's quota used (CLI reports 2 decimal places). */
+  utilization: number;
+  /** Unix epoch seconds when the window resets. */
+  resetsAt: number;
+}
+
+export interface RateLimitSnapshot {
+  fiveHour?: RateLimitWindow;
+  sevenDay?: RateLimitWindow;
 }
 
 export class ClaudeError extends Error {
@@ -174,10 +192,12 @@ function buildArgs(opts: ClaudeRunOptions, caps: CliCapabilities): string[] {
   return args;
 }
 
-interface StreamJsonObject {
+export interface StreamJsonObject {
   type?: string;
   subtype?: string;
   session_id?: string;
+  /** Set on events emitted from inside a subagent (Task/Agent tool) — not the main thread. */
+  parent_tool_use_id?: string | null;
   result?: string;
   is_error?: boolean;
   message?: {
@@ -204,6 +224,9 @@ interface StreamJsonObject {
     }>;
   };
   modelUsage?: Record<string, { contextWindow?: number }>;
+  rate_limit_info?: {
+    unifiedWindows?: Record<string, { utilization?: number; resetsAt?: number } | undefined>;
+  };
 }
 
 function tryParseJson(line: string): StreamJsonObject | null {
@@ -300,7 +323,7 @@ async function lookupLatestSessionId(cwd: string): Promise<string> {
   return newest.replace(/\.jsonl$/, '');
 }
 
-interface ParseAccumulator {
+export interface ParseAccumulator {
   sessionId: string;
   resultText: string;
   resultSeen: boolean;
@@ -309,9 +332,10 @@ interface ParseAccumulator {
   contextWindowUsed: number;
   contextWindowMax: number;
   costUsd: number;
+  rateLimits?: RateLimitSnapshot;
 }
 
-function newAccumulator(): ParseAccumulator {
+export function newAccumulator(): ParseAccumulator {
   return {
     sessionId: '',
     resultText: '',
@@ -324,7 +348,14 @@ function newAccumulator(): ParseAccumulator {
   };
 }
 
-function consumeJsonObject(acc: ParseAccumulator, obj: StreamJsonObject): void {
+function toRateLimitWindow(
+  w: { utilization?: number; resetsAt?: number } | undefined,
+): RateLimitWindow | undefined {
+  if (!w || typeof w.utilization !== 'number' || typeof w.resetsAt !== 'number') return undefined;
+  return { utilization: w.utilization, resetsAt: w.resetsAt };
+}
+
+export function consumeJsonObject(acc: ParseAccumulator, obj: StreamJsonObject): void {
   if (obj.session_id && !acc.sessionId) acc.sessionId = obj.session_id;
   // Always update sessionId from result (it's the canonical one for resume).
   if (obj.type === 'result') {
@@ -356,9 +387,19 @@ function consumeJsonObject(acc: ParseAccumulator, obj: StreamJsonObject): void {
       const maxCtx = Math.max(0, ...Object.values(obj.modelUsage).map((m) => m.contextWindow ?? 0));
       if (maxCtx > 0) acc.contextWindowMax = maxCtx;
     }
+  } else if (obj.type === 'rate_limit_event') {
+    // Emitted before each API call; the last one is the freshest account-wide quota reading.
+    const windows = obj.rate_limit_info?.unifiedWindows;
+    if (windows) {
+      const fiveHour = toRateLimitWindow(windows['five_hour']);
+      const sevenDay = toRateLimitWindow(windows['seven_day']);
+      if (fiveHour || sevenDay) acc.rateLimits = { fiveHour, sevenDay };
+    }
   } else if (obj.type === 'assistant') {
     const t = extractAssistantText(obj);
     if (t) acc.assistantTextFallback += t;
+    // Subagent calls have their own, unrelated context window — only the main thread counts.
+    if (obj.parent_tool_use_id) return;
     // Track the last assistant message's input tokens as the current context window fill.
     // Each assistant event corresponds to one API call; the last one reflects the actual
     // context size at the end of the invocation. output_tokens are generated, not "in" the window.
@@ -562,6 +603,7 @@ export function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
               contextWindowUsed: acc.contextWindowUsed,
               contextWindowMax: acc.contextWindowMax,
               costUsd: acc.costUsd,
+              rateLimits: acc.rateLimits,
             };
           }
           if (caps.outputMode === 'json') {

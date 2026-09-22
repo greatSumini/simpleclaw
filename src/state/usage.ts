@@ -1,10 +1,14 @@
 import type Database from 'better-sqlite3';
+import type { RateLimitSnapshot, RateLimitWindow } from '../claude.js';
 
 export interface UsageSnapshot {
   contextWindowUsed: number;
   contextWindowMax: number;
+  /** Raw `total_cost_usd` from the CLI — see ClaudeRunResult.costUsd for why it can't be summed. */
   costUsd: number;
   sessionId: string;
+  /** Account-wide quota utilization from the CLI's `rate_limit_event`. Absent for codex/tmux runs. */
+  rateLimits?: RateLimitSnapshot;
 }
 
 export function logUsage(db: Database.Database, entry: UsageSnapshot): void {
@@ -21,22 +25,20 @@ export function logUsage(db: Database.Database, entry: UsageSnapshot): void {
   );
 }
 
-function sumCost(db: Database.Database, since: string): number {
-  return (
-    (db
-      .prepare('SELECT COALESCE(SUM(cost_usd), 0) FROM usage_ledger WHERE ts > ?')
-      .pluck()
-      .get(since) as number) ?? 0
-  );
-}
-
 function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
   return `${n}`;
 }
 
-export function buildUsageFooter(db: Database.Database, snap: UsageSnapshot): string {
+function fmtWindow(w: RateLimitWindow | undefined, nowMs: number): string {
+  if (!w) return 'n/a';
+  // A reading taken before the window reset no longer describes the current window.
+  if (w.resetsAt * 1000 <= nowMs) return 'n/a';
+  return `${Math.round(w.utilization * 100)}%`;
+}
+
+export function buildUsageFooter(snap: UsageSnapshot, nowMs = Date.now()): string {
   let currentStr: string;
   if (snap.contextWindowMax > 0) {
     const pct = Math.round((snap.contextWindowUsed / snap.contextWindowMax) * 100);
@@ -44,14 +46,7 @@ export function buildUsageFooter(db: Database.Database, snap: UsageSnapshot): st
   } else {
     currentStr = 'n/a';
   }
-
-  const limit5h = Number(process.env['CLAW_5H_COST_LIMIT_USD'] ?? '5');
-  const cost5h = sumCost(db, new Date(Date.now() - 5 * 3_600_000).toISOString());
-  const pct5h = limit5h > 0 ? Math.min(100, Math.round((cost5h / limit5h) * 100)) : 0;
-
-  const limitWeekly = Number(process.env['CLAW_WEEKLY_COST_LIMIT_USD'] ?? '30');
-  const costWeekly = sumCost(db, new Date(Date.now() - 7 * 24 * 3_600_000).toISOString());
-  const pctWeekly = limitWeekly > 0 ? Math.min(100, Math.round((costWeekly / limitWeekly) * 100)) : 0;
-
-  return `[context usage / current ${currentStr} / 5h ${pct5h}% / weekly ${pctWeekly}%]`;
+  const fiveHour = fmtWindow(snap.rateLimits?.fiveHour, nowMs);
+  const weekly = fmtWindow(snap.rateLimits?.sevenDay, nowMs);
+  return `[context usage / current ${currentStr} / 5h ${fiveHour} / weekly ${weekly}]`;
 }
