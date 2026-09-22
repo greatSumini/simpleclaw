@@ -20,6 +20,12 @@ import { isMemoMessage } from '../orchestrator/memo.js';
 import { getPendingBackgroundJobsForThread } from '../state/background-jobs.js';
 import { issueRunToken } from '../state/run-tokens.js';
 import {
+  UNBACKED_PROMISE_WARNING,
+  detectsFollowUpPromise,
+  formatJobStatus,
+  isStatusQuestion,
+} from '../orchestrator/job-status.js';
+import {
   buildRepoWorkSystemAppend,
   buildSimpleClawMaintenanceSystemAppend,
   buildWikiIngestSystemAppend,
@@ -522,6 +528,22 @@ export class DiscordAdapter implements MessengerAdapter {
     }
   }
 
+  /**
+   * Append a visible warning when a reply promises a follow-up but nothing is registered to
+   * deliver it — the promise is otherwise indistinguishable from a real one until the user asks.
+   */
+  private guardPromise(text: string, threadKey: string, channelLabel: string): string {
+    if (!detectsFollowUpPromise(text)) return text;
+    if (getPendingBackgroundJobsForThread(this.db, threadKey).length > 0) return text;
+    logEvent(this.db, {
+      type: 'promise.unbacked',
+      channel: channelLabel,
+      threadId: threadKey,
+      summary: text.slice(-300),
+    });
+    return text + UNBACKED_PROMISE_WARNING;
+  }
+
   /** Post the cancellation notice + log events after an aborted engine run. */
   private async notifyCancelled(
     channelLabel: string,
@@ -605,6 +627,26 @@ export class DiscordAdapter implements MessengerAdapter {
       // 무반응과 구분되도록 원본 메시지에 리액션만 남긴다 (스레드·메시지 생성 없음).
       this.ipc.discordReact(channelId, msgId, '🗒️');
       return;
+    }
+
+    // "다 했어?" in a thread with registered background jobs: answer from the job table directly.
+    // No engine resume — the jobs are the ground truth, and a resume costs a full turn.
+    if (ctx.threadId && isStatusQuestion(ctx.text)) {
+      const jobs = getPendingBackgroundJobsForThread(this.db, ctx.threadId);
+      if (jobs.length > 0) {
+        const answer = formatJobStatus(jobs);
+        await this.safeSend(channelId, answer).catch((err: Error) =>
+          log.error({ err: err.message }, 'job status reply failed'),
+        );
+        logEvent(this.db, {
+          type: 'discord.message.out',
+          channel: ctx.channelName ?? ctx.channelId,
+          threadId: ctx.threadId,
+          summary: answer.slice(0, 500),
+          meta: { mode: 'job-status' },
+        });
+        return;
+      }
     }
 
     // /search shortcut — intercept before routing pipeline.
@@ -899,7 +941,7 @@ export class DiscordAdapter implements MessengerAdapter {
         costUsd: result.costUsd,
       });
 
-      const chunks = splitMessage(result.text, SAFE_CHUNK_SIZE);
+      const chunks = splitMessage(this.guardPromise(result.text, threadKey, channelLabel), SAFE_CHUNK_SIZE);
       if (chunks.length > 0) chunks[chunks.length - 1] += '\n' + usageFooter;
       for (let i = 0; i < chunks.length; i++) {
         try {
@@ -1161,7 +1203,7 @@ export class DiscordAdapter implements MessengerAdapter {
         costUsd: result.costUsd,
       });
 
-      const chunks = splitMessage(visibleText, SAFE_CHUNK_SIZE);
+      const chunks = splitMessage(this.guardPromise(visibleText, threadKey, channelLabel), SAFE_CHUNK_SIZE);
       if (chunks.length > 0) chunks[chunks.length - 1] += '\n' + clawUsageFooter;
       for (let i = 0; i < chunks.length; i++) {
         try {
@@ -1579,7 +1621,7 @@ export class DiscordAdapter implements MessengerAdapter {
         costUsd: result.costUsd,
       });
 
-      const chunks = splitMessage(result.text, SAFE_CHUNK_SIZE);
+      const chunks = splitMessage(this.guardPromise(result.text, threadKey, channelLabel), SAFE_CHUNK_SIZE);
       if (chunks.length > 0) chunks[chunks.length - 1] += '\n' + usageFooter;
       for (const chunk of chunks) {
         try {
