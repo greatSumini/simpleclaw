@@ -1,5 +1,4 @@
 import { spawn, execFile } from 'node:child_process';
-import { mkdir, writeFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,12 +42,6 @@ import {
   detectPermanentRuleIntent,
   PERMANENT_RULE_NOTICE_INSTRUCTION,
 } from '../orchestrator/prompt.js';
-import { detectSkill, truncateForCache } from '../orchestrator/skill-detector.js';
-import {
-  getSkillProposal,
-  updateSkillProposalStatus,
-  type SkillProposal,
-} from '../state/skill-proposals.js';
 import type { MessageContext } from '../messenger/types.js';
 import type { MessengerAdapter } from '../messenger/types.js';
 import { downloadAttachments, attachmentNote } from '../attachments.js';
@@ -88,18 +81,6 @@ export function parseIgnoreSenderButtonId(
   const account = rest.slice(colonIdx + 1);
   if (!email || !account) return null;
   return { email, account };
-}
-
-const CREATE_SKILL_PREFIX = 'create-skill';
-
-export function buildCreateSkillButtonId(proposalId: number): string {
-  return `${CREATE_SKILL_PREFIX}:${proposalId}`;
-}
-
-export function parseCreateSkillButtonId(customId: string): number | null {
-  if (!customId.startsWith(`${CREATE_SKILL_PREFIX}:`)) return null;
-  const id = parseInt(customId.slice(CREATE_SKILL_PREFIX.length + 1), 10);
-  return Number.isFinite(id) ? id : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -385,12 +366,6 @@ export class DiscordAdapter implements MessengerAdapter {
       return;
     }
 
-    // create-skill button
-    const proposalId = parseCreateSkillButtonId(customId);
-    if (proposalId !== null) {
-      await this.handleCreateSkillButton(interactionId, token, proposalId);
-      return;
-    }
   }
 
   // -------------------------------------------------------------------------
@@ -941,19 +916,7 @@ export class DiscordAdapter implements MessengerAdapter {
     this.activeRuns.set(threadKey, controller);
 
     try {
-      const skillsDir = path.join(this.config.simpleclawRepoPath, 'skills');
-
-      // 첨부파일 다운로드 + skill 탐지 병렬 실행
-      // 외부 repo 채널이므로 internal-scope skill(simpleclaw-debug 등)은 후보에서 제외.
-      const [savedPaths, skillResult] = await Promise.all([
-        downloadAttachments(ctx.attachments ?? []),
-        detectSkill({
-          userMessage: ctx.text,
-          previousResponse: sessionRow?.lastResponse ?? null,
-          cachedSkill: sessionRow?.lastSkill ?? null,
-          skillsDir,
-        }),
-      ]);
+      const savedPaths = await downloadAttachments(ctx.attachments ?? []);
 
       const baseText = ctx.text + attachmentNote(savedPaths);
       const userMessage = threadContext ? `${threadContext}\n\n${baseText}` : baseText;
@@ -964,12 +927,9 @@ export class DiscordAdapter implements MessengerAdapter {
         isContinuation: Boolean(resumeId),
         authorIsOwner: ctx.authorId === this.config.env.DISCORD_OWNER_USER_ID,
       });
-      const builtSystemAppend = skillResult.content
-        ? `# 활성 Skill: ${skillResult.skill}\n\n${skillResult.content}\n\n---\n${baseSystemAppend}`
-        : baseSystemAppend;
       const systemAppend = detectPermanentRuleIntent(ctx.text)
-        ? `${builtSystemAppend}\n- ${PERMANENT_RULE_NOTICE_INSTRUCTION}`
-        : builtSystemAppend;
+        ? `${baseSystemAppend}\n- ${PERMANENT_RULE_NOTICE_INSTRUCTION}`
+        : baseSystemAppend;
 
       logEvent(this.db, {
         type: 'claude.invoke',
@@ -1107,8 +1067,6 @@ export class DiscordAdapter implements MessengerAdapter {
             claudeSessionId: result.sessionId,
             repo: repo.fullName,
             cwd: repo.localPath,
-            lastSkill: skillResult.skill,
-            lastResponse: truncateForCache(result.text),
           });
         } catch (err) {
           log.error(
@@ -1214,20 +1172,7 @@ export class DiscordAdapter implements MessengerAdapter {
     this.activeRuns.set(threadKey, controller);
 
     try {
-      const skillsDir = path.join(cwd, 'skills');
-
-      // 첨부파일 다운로드 + skill 탐지 병렬 실행
-      // SimpleClaw 자체 유지보수 세션이므로 internal-scope skill도 후보에 포함.
-      const [savedPaths, skillResult] = await Promise.all([
-        downloadAttachments(ctx.attachments ?? []),
-        detectSkill({
-          userMessage: ctx.text,
-          previousResponse: sessionRow?.lastResponse ?? null,
-          cachedSkill: sessionRow?.lastSkill ?? null,
-          skillsDir,
-          allowInternal: true,
-        }),
-      ]);
+      const savedPaths = await downloadAttachments(ctx.attachments ?? []);
 
       const baseText = ctx.text + attachmentNote(savedPaths);
       const userMessage = threadContext ? `${threadContext}\n\n${baseText}` : baseText;
@@ -1236,12 +1181,9 @@ export class DiscordAdapter implements MessengerAdapter {
         isContinuation: Boolean(resumeId),
         authorIsOwner: ctx.authorId === this.config.env.DISCORD_OWNER_USER_ID,
       });
-      const builtSystemAppend = skillResult.content
-        ? `# 활성 Skill: ${skillResult.skill}\n\n${skillResult.content}\n\n---\n${baseSystemAppend}`
-        : baseSystemAppend;
       const systemAppend = detectPermanentRuleIntent(ctx.text)
-        ? `${builtSystemAppend}\n- ${PERMANENT_RULE_NOTICE_INSTRUCTION}`
-        : builtSystemAppend;
+        ? `${baseSystemAppend}\n- ${PERMANENT_RULE_NOTICE_INSTRUCTION}`
+        : baseSystemAppend;
 
       logEvent(this.db, {
         type: 'claude.invoke',
@@ -1361,8 +1303,6 @@ export class DiscordAdapter implements MessengerAdapter {
           claudeSessionId: result.sessionId,
           repo: 'greatSumini/simpleclaw',
           cwd,
-          lastSkill: skillResult.skill,
-          lastResponse: truncateForCache(visibleText),
         });
       } catch (err) {
         log.error(
@@ -1659,26 +1599,12 @@ export class DiscordAdapter implements MessengerAdapter {
     this.activeRuns.set(threadKey, controller);
 
     try {
-      const skillsDir = path.join(this.config.simpleclawRepoPath, 'skills');
-
-      const [savedPaths, skillResult] = await Promise.all([
-        downloadAttachments(ctx.attachments ?? []),
-        detectSkill({
-          userMessage: ctx.text,
-          previousResponse: sessionRow?.lastResponse ?? null,
-          cachedSkill: sessionRow?.lastSkill ?? null,
-          skillsDir,
-          allowInternal: true,
-        }),
-      ]);
+      const savedPaths = await downloadAttachments(ctx.attachments ?? []);
 
       const baseText = ctx.text + attachmentNote(savedPaths);
       const userMessage = threadContext ? `${threadContext}\n\n${baseText}` : baseText;
 
-      const baseSystemAppend = buildRootSystemAppend({ isContinuation: Boolean(resumeId) });
-      const systemAppend = skillResult.content
-        ? `# 활성 Skill: ${skillResult.skill}\n\n${skillResult.content}\n\n---\n${baseSystemAppend}`
-        : baseSystemAppend;
+      const systemAppend = buildRootSystemAppend({ isContinuation: Boolean(resumeId) });
 
       logEvent(this.db, {
         type: 'claude.invoke',
@@ -1780,8 +1706,6 @@ export class DiscordAdapter implements MessengerAdapter {
           claudeSessionId: result.sessionId,
           repo: 'root',
           cwd,
-          lastSkill: skillResult.skill,
-          lastResponse: truncateForCache(result.text),
         });
       } catch (err) {
         log.error(
@@ -1840,66 +1764,6 @@ export class DiscordAdapter implements MessengerAdapter {
       process.exit(0);
     }
     // Otherwise runWithMutex finally block will call process.exit(0) when inFlightCount hits 0
-  }
-
-  // Skill creation (button handler)
-  // -------------------------------------------------------------------------
-
-  private async handleCreateSkillButton(
-    interactionId: string,
-    token: string,
-    proposalId: number,
-  ): Promise<void> {
-    const proposal = getSkillProposal(this.db, proposalId);
-    if (!proposal) {
-      await this.ipc.interactionReply(interactionId, token, '제안을 찾을 수 없습니다 (이미 처리됨?).', true);
-      return;
-    }
-    if (proposal.status !== 'pending') {
-      await this.ipc.interactionReply(interactionId, token, `이미 처리됨: ${proposal.status}`, true);
-      return;
-    }
-
-    // Acknowledge immediately (ephemeral)
-    await this.ipc.interactionReply(interactionId, token, '✅ Skill 생성 중...', true);
-
-    try {
-      if (proposal.kind === 'simpleclaw') {
-        await this.createSimpleClawSkill(proposal);
-      } else {
-        await this.createRepoSkill(proposal);
-      }
-      updateSkillProposalStatus(this.db, proposalId, 'created');
-      log.info({ proposalId, name: proposal.name, kind: proposal.kind }, 'skill proposal created');
-    } catch (err) {
-      log.error({ err: (err as Error).message, proposalId }, 'create-skill button: failed');
-    }
-  }
-
-  private async createSimpleClawSkill(proposal: SkillProposal): Promise<void> {
-    const skillDir = path.join(this.config.simpleclawRepoPath, 'skills', proposal.name);
-    await mkdir(skillDir, { recursive: true });
-    await writeFile(path.join(skillDir, 'SKILL.md'), proposal.content, 'utf8');
-
-    const repoPath = this.config.simpleclawRepoPath;
-    await execFileAsync('git', ['-C', repoPath, 'add', `skills/${proposal.name}/SKILL.md`]);
-    await execFileAsync('git', ['-C', repoPath, 'commit', '-m', `feat: skill 자동 생성 — ${proposal.name}`]);
-    await execFileAsync('git', ['-C', repoPath, 'push']);
-  }
-
-  private async createRepoSkill(proposal: SkillProposal): Promise<void> {
-    if (!proposal.repoFullName) throw new Error('repoFullName required for repo skill');
-    const repoEntry = this.config.repoChannels.find((r) => r.fullName === proposal.repoFullName);
-    if (!repoEntry) throw new Error(`repo not registered: ${proposal.repoFullName}`);
-
-    const skillDir = path.join(repoEntry.localPath, '.claude', 'skills', proposal.name);
-    await mkdir(skillDir, { recursive: true });
-    await writeFile(path.join(skillDir, 'SKILL.md'), proposal.content, 'utf8');
-
-    const repoPath = repoEntry.localPath;
-    await execFileAsync('git', ['-C', repoPath, 'add', `.claude/skills/${proposal.name}/SKILL.md`]);
-    await execFileAsync('git', ['-C', repoPath, 'commit', '-m', `feat: skill 자동 생성 — ${proposal.name}`]);
-    await execFileAsync('git', ['-C', repoPath, 'push']);
   }
 
   // -------------------------------------------------------------------------

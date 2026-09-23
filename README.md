@@ -6,7 +6,7 @@
 
 > Discord/Gmail을 인터페이스로, `claude` CLI를 두뇌로 — macOS에서 24/7 돌아가는 개인 AI 에이전트 게이트웨이.
 
-메신저에 메시지를 보내면 SimpleClaw가 적절한 컨텍스트(스킬·레포)를 조립해 `claude --print`를 headless로 실행하고, 결과를 다시 채널로 돌려준다. 레포 코드 수정부터 이메일 초안까지 — 모두 채팅 하나로.
+메신저에 메시지를 보내면 SimpleClaw가 적절한 컨텍스트(레포·규칙)를 조립해 `claude --print`를 headless로 실행하고, 결과를 다시 채널로 돌려준다. 레포 코드 수정부터 이메일 초안까지 — 모두 채팅 하나로.
 
 ---
 
@@ -54,11 +54,6 @@ Setup Guide 문서: https://github.com/greatSumini/simpleclaw/blob/main/SETUP.md
           │  │ (classify)│  │  trivial / repo / unclear
           │  └─────┬─────┘  │
           │        │        │
-          │  ┌─────▼─────┐  │
-          │  │  Skill    │  │  SKILL.md 자동 감지 + 주입
-          │  │ Detector  │  │
-          │  └─────┬─────┘  │
-          │        │        │
           └────────┼────────┘
                    │
         ┌──────────┴──────────┐
@@ -67,7 +62,7 @@ Setup Guide 문서: https://github.com/greatSumini/simpleclaw/blob/main/SETUP.md
    즉시 답변            spawn claude
                     --print --resume <id>
                     cwd = repo 디렉터리
-                    --append-system-prompt = 스킬+규칙
+                    --append-system-prompt = 지침·규칙
                          │
                          ▼
                   ┌─────────────┐
@@ -83,11 +78,10 @@ Setup Guide 문서: https://github.com/greatSumini/simpleclaw/blob/main/SETUP.md
 ### 핵심 루프
 
 1. **분류** — Haiku가 메시지를 보고 `trivial` / `repo` / `unclear` 중 하나로 분류
-2. **스킬 주입** — `simpleclaw/skills/` + 레포의 `.claude/skills/`에서 가장 관련된 SKILL.md를 찾아 `systemAppend`에 삽입
-3. **Claude 실행** — `claude --print --resume <session_id>` headless 실행, 결과 수신
-4. **응답 전송** — Discord thread에 포스팅 (2000자 자동 분할, 파일 첨부 지원)
+2. **Claude 실행** — `claude --print --resume <session_id>` headless 실행, 결과 수신
+3. **응답 전송** — Discord thread에 포스팅 (2000자 자동 분할, 파일 첨부 지원)
 
-주입되는 지침·스킬은 `--append-system-prompt`로 전달된다. 유저 턴에 인라인하면 세션 트랜스크립트에 남아 `--resume`마다 다시 과금되기 때문이다.
+주입되는 지침·규칙은 `--append-system-prompt`로 전달된다. 유저 턴에 인라인하면 세션 트랜스크립트에 남아 `--resume`마다 다시 과금되기 때문이다.
 
 ---
 
@@ -176,21 +170,15 @@ tail -f logs/launchd.log logs/launchd.error.log
 
 ### 스킬 시스템
 
-```
-simpleclaw/skills/         ← 레포 무관 SimpleClaw 전역 스킬 (여기 추가)
-  simpleclaw-debug/SKILL.md
-  system-design-tdd/SKILL.md
-  examples/               ← 템플릿 (비활성, 복사해서 커스터마이즈)
-    b2b-email/SKILL.md
-    calendar-scheduling/SKILL.md
+SimpleClaw는 자체 스킬 감지·주입을 하지 않는다. 스킬은 Claude Code가 세션 도중 직접 로드한다.
 
-{repo}/.claude/skills/    ← 레포 전용 스킬
+```
+~/.claude/skills/          ← 유저 전역 (모든 레포 + root 세션)
+  notion/SKILL.md
+
+{repo}/.claude/skills/     ← 레포 전용
   add-api-endpoint/SKILL.md
 ```
-
-- SKILL.md의 `triggers` 키워드를 기반으로 Haiku가 자동 선택
-- 선택된 스킬의 본문이 Claude 실행 전 `systemAppend`에 주입됨
-- 세션 내 짧은 후속 메시지(<15자)는 직전 스킬 자동 재사용
 
 ### 세션 연속성
 
@@ -229,29 +217,24 @@ Claude가 소스를 수정한 뒤 응답에 `__SIMPLECLAW_RESTART__` 마커를 �
 
 ## 스킬 추가
 
+Claude Code 네이티브 스킬로 추가한다. 레포가 달라져도 필요하면 유저 전역, 해당 레포
+코드를 알아야 쓸 수 있으면 레포 전용에 둔다.
+
 ```bash
-mkdir -p skills/my-skill
-cat > skills/my-skill/SKILL.md << 'EOF'
+# 유저 전역 (모든 세션에서 로드)
+mkdir -p ~/.claude/skills/my-skill
+cat > ~/.claude/skills/my-skill/SKILL.md << 'EOF'
 ---
 name: my-skill
-description: 한 줄 설명 (Haiku 분류기가 사용)
-triggers:
-  - 트리거 키워드 1
-  - 트리거 키워드 2
+description: 한 줄 설명 — Claude Code가 이걸 보고 로드 여부를 판단한다
 ---
 
-# 주입될 내용
+# 내용
 Claude에게 전달할 지침...
 EOF
-
-git add skills/my-skill/SKILL.md
-git commit -m "feat: my-skill 추가"
-git push
 ```
 
-> `skills/examples/`에 있는 템플릿을 `skills/`로 복사한 뒤 커스터마이즈하는 것도 좋은 출발점입니다.
-
-> **레포 전용 스킬**은 `{repo}/.claude/skills/` 하위에 같은 포맷으로 작성.
+> **레포 전용 스킬**은 `{repo}/.claude/skills/` 하위에 같은 포맷으로 작성 후 커밋.
 
 ---
 
@@ -261,9 +244,8 @@ git push
 
 | 테이블 | 용도 |
 |--------|------|
-| `sessions` | thread_id → claude session_id, 레포, 마지막 스킬 |
+| `sessions` | thread_id → claude session_id, 레포, cwd |
 | `events` | 전체 이벤트 감사 로그 (FTS5 전문검색) |
-| `skill_proposals` | 자동 감지된 스킬 제안 (pending/approved) |
 | `message_queue` | 재시작 중 수신 메시지 버퍼 |
 | `sender_policies` | Gmail 발신자 허용/차단 정책 |
 
@@ -272,7 +254,6 @@ git push
 htmx 기반 SSR 대시보드 (`:3200`, `DASHBOARD_SECRET` 인증):
 - 이벤트 뷰어 (FTS5 전문검색)
 - 세션 히스토리
-- 스킬 제안 큐 (승인/거절)
 
 ---
 
@@ -286,7 +267,7 @@ htmx 기반 SSR 대시보드 (`:3200`, `DASHBOARD_SECRET` 인증):
 | Gmail | googleapis v144 (OAuth 2.0) |
 | 임베딩 | @huggingface/transformers (온디바이스) |
 | LLM 오케스트레이션 | Claude CLI headless (`claude --print`) |
-| 분류기 | Claude Haiku (라우터, 스킬 감지, 중요도) |
+| 분류기 | Claude Haiku (라우터, 중요도) |
 | 대시보드 | Express + htmx |
 | 데몬 | macOS launchd (`KeepAlive: true`) |
 
@@ -306,7 +287,6 @@ src/
     gmail.ts              계정 폴링, 중요도 판정 위임
   orchestrator/
     router.ts             trivial/repo/unclear 분류기
-    skill-detector.ts     SKILL.md 감지·선택·주입
     prompt.ts             systemAppend 빌더
   state/
     db.ts                 SQLite 초기화
@@ -316,8 +296,6 @@ src/
     repo-sync.ts          주기적 git pull
   dashboard/
     routes.ts             /dashboard 엔드포인트 (htmx)
-skills/                   SimpleClaw 전역 스킬 (레포 무관)
-  examples/               사용 예시 템플릿 (비활성)
 scripts/
   setup.ts                대화형 설치 위저드
   gmail-auth.ts           Gmail OAuth refresh token 발급

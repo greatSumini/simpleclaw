@@ -64,70 +64,23 @@ repo 채널의 **새 top-level 메시지**는 runClaude 전에 TypeSafe Jev(Choi
 - 스레드 안 후속 메시지는 판정 없이 **항상 Claude**. 세션이 없으므로 `fetchThreadContext`가 route 답변을 컨텍스트로 넘긴다.
 
 ---
-
-## Skills 시스템
-
-### 개요
-
-SimpleClaw는 자체 skill 감지·주입 시스템을 갖는다. 유저 메시지가 들어오면 Haiku가 적합한 skill을 감지하고, 해당 skill의 내용을 메인 LLM 호출 시 systemAppend에 자동 주입한다.
-
-### 디렉토리 구조
-
-```
-simpleclaw/
-└── skills/
-    └── {skill-name}/
-        └── SKILL.md      # 필수. frontmatter에 name, description, triggers 포함
-```
-
-### SKILL.md 포맷
-
-```markdown
----
-name: skill-name
-description: 한 줄 설명 (Haiku 분류기가 skill 선택 시 사용)
-scope: internal | shared   # 생략 시 shared
-triggers:
-  - 트리거 키워드/패턴 예시 1
-  - 트리거 키워드/패턴 예시 2
 ---
 
-# (skill 본문 — 메인 LLM systemAppend에 주입되는 실제 내용)
-```
+## Skill 주입 — Claude Code 네이티브 시스템만 사용
 
-**`scope` 필드 (신뢰 경계):**
-- `shared` (기본값): 모든 세션(외부 repo-work 스레드 포함)에서 감지 후보로 사용 가능.
-- `internal`: SimpleClaw 자체 유지보수 세션(`runSimpleClawMaintenanceInThread`)에서만 감지 후보로 사용됨. 외부 repo 채널의 `detectSkill()` 호출(`allowInternal` 미지정)에서는 후보에서 제외되어, Haiku 분류기 프롬프트에도 노출되지 않는다.
-- SimpleClaw 내부 아키텍처/버그 패턴/DB 스키마 등 외부 repo 세션에 노출되면 안 되는 지식(예: `simpleclaw-debug`)은 반드시 `scope: internal`로 작성할 것.
+SimpleClaw 자체 skill 감지·주입 시스템(`skills/`, `skill-detector.ts`)은 2026-09-23에 제거되었다.
+skill은 전적으로 Claude Code가 세션 도중 스스로 로드한다.
 
-### SimpleClaw skill vs Repo skill 구분 원칙
+| 범위 | 위치 | 적용 대상 |
+|------|------|-----------|
+| 유저 전역 | `~/.claude/skills/` | 모든 repo + root 세션 |
+| repo 전용 | `{repo}/.claude/skills/` | 해당 repo 세션만 |
 
-| 기준 | SimpleClaw skill | Repo (Claude Code) skill |
-|------|-----------|--------------------------|
-| 저장 위치 | `simpleclaw/skills/` | `{repo}/.claude/skills/` |
-| 주입 주체 | SimpleClaw 오케스트레이터 (세션 시작 전) | Claude Code 에이전트 (세션 도중) |
-| 대상 | 인터랙션 패턴 / 커뮤니케이션 방식 | 코드베이스 내 구현 패턴 |
-| 핵심 질문 | "레포가 달라져도 이 지식이 필요한가?" | "이 레포 코드를 알아야 쓸 수 있는가?" |
-
-**SimpleClaw skill에 속하는 것:**
-- 커뮤니케이션 (B2B 이메일 초안, 캘린더 미팅 협의)
-- SimpleClaw 시스템 자체 지식 (디버그, 재시작 패턴, 아키텍처)
-- 레포에 무관하게 반복되는 크로스커팅 인터랙션 패턴
-
-**Repo skill에 속하는 것:**
-- 레포 내 코드 생성/수정 패턴 (API 추가, DB 쿼리 등)
-- 레포 전용 CLI/스크립트 사용법
-- 해당 레포 코드베이스 지식 없이는 쓸 수 없는 것
-
-**중복 시:** repo skill로 단일화. SimpleClaw skill은 repo skill 호출을 유도하는 힌트만 제공.
-
-### "이건 SimpleClaw skill로 추가해두자" 명령 처리
-
-유저가 위 표현으로 명령하면:
-1. `skills/{적절한-이름}/SKILL.md` 파일 생성
-2. frontmatter에 name, description, triggers 작성
-3. 본문에 주입할 실제 지침 내용 작성
-4. git commit & push (소스 변경 아니므로 `pnpm build` 불필요, 재시작 마커 불필요)
+- "이건 skill로 추가해두자" 요청이 오면 위 두 곳 중 적절한 쪽에 `SKILL.md`를 만든다.
+  레포가 달라져도 필요한 지식이면 유저 전역, 해당 레포 코드를 알아야 쓸 수 있으면 repo 전용.
+- SimpleClaw repo 자체의 skill은 `greatSumini/claw/.claude/skills/`에 둔다.
+- 제거 배경: 감지 실패율이 23%까지 상승(대부분 20초 타임아웃)했고, 자동 생성된 skill이
+  repo skill과 정반대 지시를 내리는 충돌이 반복됐다. 실사용 450세션 중 88%가 단일 repo였다.
 
 ### Skill 작성 검증 원칙
 
