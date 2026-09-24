@@ -1,7 +1,7 @@
 import net from 'net';
 import { EventEmitter } from 'events';
 import type { G2W, W2G, SerializedMessage } from './types.js';
-import { IPC_SOCKET_PATH } from './server.js';
+import { ipcSocketPath } from './server.js';
 
 export class WorkerIpc extends EventEmitter {
   private socket: net.Socket | null = null;
@@ -16,7 +16,7 @@ export class WorkerIpc extends EventEmitter {
 
   private doConnect(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const socket = net.createConnection(IPC_SOCKET_PATH);
+      const socket = net.createConnection(ipcSocketPath());
       socket.once('connect', () => {
         this.socket = socket;
         this.connected = true;

@@ -1,10 +1,30 @@
 import net from 'net';
 import fs from 'fs';
+import path from 'path';
 import { spawn, type ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import type { G2W, W2G } from './types.js';
 
-export const IPC_SOCKET_PATH = '/tmp/claw-ipc.sock';
+/**
+ * Where the socket lived before 2026-09. Kept only so a stale file from an older build gets
+ * cleaned up on start — nothing connects here anymore.
+ */
+const LEGACY_IPC_SOCKET_PATH = '/tmp/claw-ipc.sock';
+
+/**
+ * Resolved at call time so the gateway and the worker it spawns agree on one path.
+ *
+ * Under DATA_DIR rather than /tmp: `onWorkerConnect` accepts whoever connects as *the* worker,
+ * and W2G messages like `discord.send.file` make the gateway read an arbitrary path and upload
+ * it. A sandboxed engine runs under the same uid, so file mode alone would not keep it out —
+ * the path has to sit inside a directory its sandbox profile denies.
+ */
+export function ipcSocketPath(): string {
+  const explicit = process.env['SIMPLECLAW_IPC_SOCKET'];
+  if (explicit) return explicit;
+  const dataDir = process.env['DATA_DIR'] ?? path.resolve(process.cwd(), 'data');
+  return path.join(dataDir, 'ipc.sock');
+}
 
 export class GatewayIpc extends EventEmitter {
   private server: net.Server;
@@ -17,6 +37,7 @@ export class GatewayIpc extends EventEmitter {
   private readonly workerBin: string;
   private readonly workerCwd: string;
   private readonly workerEnv: NodeJS.ProcessEnv;
+  private readonly socketPath: string;
   private stopping = false;
 
   constructor(opts: { workerBin: string; cwd: string; env?: NodeJS.ProcessEnv }) {
@@ -24,13 +45,16 @@ export class GatewayIpc extends EventEmitter {
     this.workerBin = opts.workerBin;
     this.workerCwd = opts.cwd;
     this.workerEnv = opts.env ?? process.env;
+    this.socketPath = ipcSocketPath();
     this.server = net.createServer((socket) => this.onWorkerConnect(socket));
   }
 
   async start(): Promise<void> {
-    try { fs.unlinkSync(IPC_SOCKET_PATH); } catch { /* ignore */ }
+    fs.mkdirSync(path.dirname(this.socketPath), { recursive: true });
+    try { fs.unlinkSync(this.socketPath); } catch { /* ignore */ }
+    try { fs.unlinkSync(LEGACY_IPC_SOCKET_PATH); } catch { /* ignore */ }
     await new Promise<void>((resolve, reject) => {
-      this.server.listen(IPC_SOCKET_PATH, () => resolve());
+      this.server.listen(this.socketPath, () => resolve());
       this.server.once('error', reject);
     });
     this.spawnWorker();
@@ -40,7 +64,7 @@ export class GatewayIpc extends EventEmitter {
     this.stopping = true;
     this.workerProcess?.kill('SIGTERM');
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
-    try { fs.unlinkSync(IPC_SOCKET_PATH); } catch { /* ignore */ }
+    try { fs.unlinkSync(this.socketPath); } catch { /* ignore */ }
   }
 
   setDiscordHandler(fn: (req: W2G) => Promise<void>): void {
@@ -123,7 +147,9 @@ export class GatewayIpc extends EventEmitter {
     this.workerReady = false;
     const child = spawn('node', [this.workerBin], {
       cwd: this.workerCwd,
-      env: this.workerEnv,
+      // Pin the worker to the path we actually bound, so a differing DATA_DIR/cwd can't
+      // silently point the two halves at different sockets.
+      env: { ...this.workerEnv, SIMPLECLAW_IPC_SOCKET: this.socketPath },
       stdio: 'inherit',
     });
     this.workerProcess = child;
