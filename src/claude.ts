@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { promises as fs } from 'node:fs';
+import { accessSync, constants as fsConstants, promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { type Artifact, extractArtifacts } from './artifact.js';
@@ -102,6 +102,28 @@ const SIGKILL_GRACE_MS = 5_000;
 /** Read at call time so tests can override process.env.CLAUDE_BIN. */
 function getClaudeBin(): string {
   return process.env['CLAUDE_BIN'] ?? 'claude';
+}
+
+/**
+ * Resolve a bare binary name against *our* PATH.
+ *
+ * `spawn` would do this itself, but under sandbox-exec the lookup moves into sandbox-exec's own
+ * execvp(), which searches the PATH we hand the sandboxed session — deliberately minimal, and not
+ * where claude is installed. Passing an absolute path keeps the two concerns separate.
+ */
+function resolveBin(bin: string): string {
+  if (bin.includes('/')) return bin;
+  for (const dir of (process.env['PATH'] ?? '').split(':')) {
+    if (!dir) continue;
+    const candidate = path.join(dir, bin);
+    try {
+      accessSync(candidate, fsConstants.X_OK);
+      return candidate;
+    } catch {
+      // not here — keep looking
+    }
+  }
+  return bin;
 }
 
 let capabilitiesPromise: Promise<CliCapabilities> | null = null;
@@ -454,7 +476,10 @@ export function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
     const engineHome = opts.envReplace?.['HOME'] ?? opts.env?.['HOME'];
     // sandbox-exec execs the engine in-place, so signals, stdio and exit codes behave as before.
     const [bin, binArgs] = opts.sandboxProfile
-      ? (['/usr/bin/sandbox-exec', ['-f', opts.sandboxProfile, getClaudeBin(), ...args]] as const)
+      ? ([
+          '/usr/bin/sandbox-exec',
+          ['-f', opts.sandboxProfile, resolveBin(getClaudeBin()), ...args],
+        ] as const)
       : ([getClaudeBin(), args] as const);
 
     return await new Promise<ClaudeRunResult>((resolve, reject) => {
