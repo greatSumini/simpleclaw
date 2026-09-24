@@ -279,12 +279,17 @@ export class DiscordGatewayAdapter implements MailAlertPoster {
     user: User | PartialUser,
   ): Promise<void> {
     if (user.bot) return;
-    if (user.id !== this.config.env.DISCORD_OWNER_USER_ID) return;
 
     const emoji = reaction.emoji.name;
     if (emoji !== '✅' && emoji !== '❌' && emoji !== '🌀' && emoji !== '🛑') return;
 
     const msg = reaction.message.partial ? await reaction.message.fetch() : reaction.message;
+
+    // 🛑 only stops a run in the channel it is used in, so allowlisted users get it for their own
+    // channel — without it they can start work they have no way to stop. Everything else (approve,
+    // reject, re-run) stays owner-only.
+    const isOwner = user.id === this.config.env.DISCORD_OWNER_USER_ID;
+    if (!isOwner && !(emoji === '🛑' && this.isAllowedInChannel(msg.channel, user.id))) return;
 
     if (emoji === '🌀') {
       const ctx = this.buildContext(msg);
@@ -318,12 +323,21 @@ export class DiscordGatewayAdapter implements MailAlertPoster {
       msgId: msg.id,
       channelId: targetChannelId,
       userId: user.id,
-      isOwner: true,
+      isOwner,
       isThread: isThreadChannel || !!attachedThreadId,
     });
   }
 
   private async onButtonInteraction(interaction: ButtonInteraction): Promise<void> {
+    // Buttons carry privileged actions (the new-project launcher creates repos and channels) and
+    // nothing downstream re-checks who clicked, so the check has to happen here.
+    if (interaction.user.id !== this.config.env.DISCORD_OWNER_USER_ID) {
+      log.debug(
+        { customId: interaction.customId, userId: interaction.user.id },
+        'gateway: button interaction from non-owner ignored',
+      );
+      return;
+    }
     this.ipc.forwardEvent({
       type: 'discord.button',
       customId: interaction.customId,
@@ -339,12 +353,16 @@ export class DiscordGatewayAdapter implements MailAlertPoster {
   // -------------------------------------------------------------------------
 
   private isAllowedUser(msg: Message): boolean {
-    const channel = msg.channel;
+    return this.isAllowedInChannel(msg.channel, msg.author.id);
+  }
+
+  /** Reactions come from a user who is not the message author, so the check takes both parts. */
+  private isAllowedInChannel(channel: Message['channel'], userId: string): boolean {
     const routingChannelId = channel.isThread()
       ? (channel.parentId ?? channel.id)
       : channel.id;
     const repo = this.config.repoChannels.find((r) => r.channelId === routingChannelId);
-    return repo?.allowedUserIds?.includes(msg.author.id) ?? false;
+    return repo?.allowedUserIds?.includes(userId) ?? false;
   }
 
   // -------------------------------------------------------------------------

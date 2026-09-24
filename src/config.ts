@@ -83,6 +83,22 @@ export interface RepoEntry {
   allowedUserIds?: string[];
   /** If true, this repo is the "hub" — messages sent to the general channel route here by default. */
   isHub?: boolean;
+  /**
+   * Confine this repo's engine sessions. Set it for a channel shared with someone other than the
+   * owner: the engine otherwise runs with `--dangerously-skip-permissions` as the owner's macOS
+   * user, so cwd is the only thing tying it to this repo.
+   *
+   * Sandboxed sessions also lose `claw-job` — `claw-job watch --check` stores a command that the
+   * (unconfined) gateway later runs, which would hand the session a way straight out of the box.
+   */
+  sandbox?: {
+    /** Seatbelt profile path. Must not be writable by the session it confines. */
+    profile: string;
+    /** HOME for the engine — transcripts and tool state land here, not in the owner's ~/.claude. */
+    home: string;
+    /** Env for the session, on top of the minimal base. The owner's `.env` is never inherited. */
+    env?: Record<string, string>;
+  };
 }
 
 export interface GmailAccount {
@@ -152,6 +168,13 @@ const RepoEntryConfigSchema = z.object({
   autoSolveIssues: z.boolean().optional(),
   allowedUserIds: z.array(z.string()).optional(),
   isHub: z.boolean().optional(),
+  sandbox: z
+    .object({
+      profile: z.string().min(1),
+      home: z.string().min(1),
+      env: z.record(z.string()).optional(),
+    })
+    .optional(),
 });
 
 const GmailAccountConfigSchema = z.object({

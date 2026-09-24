@@ -528,6 +528,35 @@ export class DiscordAdapter implements MessengerAdapter {
   }
 
   /**
+   * The complete environment for a sandboxed session — built up, not filtered down.
+   *
+   * `process.env` is not a safe starting point here: dotenv loads the whole `.env` into it, so
+   * inheriting would pass GH_TOKEN, DISCORD_BOT_TOKEN and every Gmail refresh token straight to a
+   * session the Seatbelt profile exists to keep away from exactly those secrets.
+   *
+   * No SIMPLECLAW_RUN_TOKEN / SIMPLECLAW_JOB_CLI either: claw-job is deliberately unavailable.
+   */
+  private sandboxEnv(repo: RepoEntry): Record<string, string> {
+    const sandbox = repo.sandbox!;
+    const env: Record<string, string> = {
+      PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
+      HOME: sandbox.home,
+      LANG: process.env['LANG'] ?? 'en_US.UTF-8',
+      // The engine authenticates with this token rather than a keychain entry, which is what lets
+      // a session with its own HOME work at all.
+      CLAUDE_CODE_OAUTH_TOKEN: this.config.env.CLAUDE_CODE_OAUTH_TOKEN,
+    };
+    // `${VAR}` expands from our own environment, so a session's credentials stay in .env instead
+    // of being copied into simpleclaw.config.json as a second plaintext location.
+    for (const [key, value] of Object.entries(sandbox.env ?? {})) {
+      env[key] = value.replace(/\$\{(\w+)\}/g, (_, name: string) => process.env[name] ?? '');
+    }
+    const tmp = process.env['TMPDIR'];
+    if (tmp) env['TMPDIR'] = tmp;
+    return env;
+  }
+
+  /**
    * Append a visible warning when a reply promises a follow-up but nothing is registered to
    * deliver it — the promise is otherwise indistinguishable from a real one until the user asks.
    */
@@ -947,7 +976,10 @@ export class DiscordAdapter implements MessengerAdapter {
       });
 
       // For (btw) messages: snapshot session files before running so we can roll back after.
-      const btwSnapshot = isBtw ? await snapshotSessionFiles(repo.localPath) : undefined;
+      // A sandboxed session writes its transcripts under its own HOME, not ours.
+      const btwSnapshot = isBtw
+        ? await snapshotSessionFiles(repo.localPath, repo.sandbox?.home)
+        : undefined;
 
       let result;
       try {
@@ -970,6 +1002,18 @@ export class DiscordAdapter implements MessengerAdapter {
             contextWindowMax: 0,
             costUsd: 0,
           };
+        } else if (repo.sandbox) {
+          // codex has no sandbox plumbing — a sandboxed repo always runs on claude.
+          result = await runClaude({
+            cwd: repo.localPath,
+            prompt: userMessage,
+            systemAppend,
+            resume: resumeId,
+            signal: controller.signal,
+            timeoutMs: CLAUDE_TIMEOUT_MS,
+            envReplace: this.sandboxEnv(repo),
+            sandboxProfile: repo.sandbox.profile,
+          });
         } else {
           const runner = repo.engine === 'codex' ? runCodex : runClaude;
           result = await runner({
@@ -1054,7 +1098,7 @@ export class DiscordAdapter implements MessengerAdapter {
 
       // (btw) mode: restore session files to pre-run state so this exchange is ephemeral.
       if (isBtw && btwSnapshot) {
-        await restoreSessionFiles(repo.localPath, btwSnapshot).catch((err: Error) =>
+        await restoreSessionFiles(repo.localPath, btwSnapshot, repo.sandbox?.home).catch((err: Error) =>
           log.warn({ err: err.message, threadId: threadKey }, 'btw: session restore failed'),
         );
       }

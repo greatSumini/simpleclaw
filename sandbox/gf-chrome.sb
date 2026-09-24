@@ -1,0 +1,25 @@
+;; Seatbelt profile for the dedicated Chrome that the yeseulga session automates.
+;;
+;; Without this, giving the session a CDP endpoint would hand back everything the engine
+;; profile takes away: CDP can navigate to file:///Users/sumin/... and read the DOM, so the
+;; browser would be a read primitive around the filesystem boundary. Confining Chrome itself
+;; closes that path.
+;;
+;; Chrome must be launched with --no-sandbox: its own Seatbelt sandbox cannot initialize
+;; inside an outer one ("sandbox initialization failed: Operation not permitted"). That drops
+;; Chrome's renderer sandbox, so this browser is for automation only — the outer profile is
+;; what still contains a compromised renderer.
+
+(version 1)
+(allow default)
+
+(deny file-read* file-write* (subpath "/Users/sumin"))
+
+;; Her profile directory (--user-data-dir) and anything she downloads.
+(allow file-read* file-write* (subpath "/Users/sumin/gf-workspace"))
+
+;; Stat on the ancestor directory itself — not its contents. Chrome walks the parent chain of
+;; --user-data-dir and, when that stat fails, silently falls back to the owner's default profile
+;; ("readlink(/Users/sumin/Library/Application Support/Google/Chrome/SingletonLock) failed"),
+;; which is the one profile this whole setup exists to keep it out of.
+(allow file-read-metadata (literal "/Users/sumin"))

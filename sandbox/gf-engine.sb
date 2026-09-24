@@ -1,0 +1,33 @@
+;; Seatbelt profile for the yeseulga (context-hub) engine session.
+;;
+;; Lives inside the SimpleClaw repo on purpose: the profile must sit somewhere the sandboxed
+;; session cannot write. If it lived in gf-workspace the session could rewrite it to
+;; `(allow default)` and the next spawn would start unconfined.
+;;
+;; Blocklist rather than allowlist — `(deny default)` would mean enumerating the hundreds of
+;; paths macOS needs to start a process, which fails closed in unhelpful ways.
+
+(version 1)
+(allow default)
+
+;; ── Filesystem ──────────────────────────────────────────────────────────────
+;; Everything of the owner's lives under $HOME: repos, .env files, Claude session
+;; transcripts, the SQLite DB, the gateway IPC socket, ~/.ssh, ~/Library keychains.
+(deny file-read* file-write* (subpath "/Users/sumin"))
+
+;; The one writable carve-out: her workspace (repo clone, HOME, Chrome profile, gitconfig).
+(allow file-read* file-write* (subpath "/Users/sumin/gf-workspace"))
+
+;; The claude binary itself is installed under the owner's home. Read-only, program files only.
+(allow file-read* (subpath "/Users/sumin/.local/bin"))
+(allow file-read* (subpath "/Users/sumin/.local/share/claude"))
+
+;; ── Network ─────────────────────────────────────────────────────────────────
+;; External internet stays open (the agent needs the Anthropic API and the web).
+;; Loopback does not: the owner's Chrome exposes CDP on a local port, and CDP is full
+;; control of every logged-in session in that browser. The dashboard and any other local
+;; service are shut out by the same rule.
+(deny network* (remote ip "localhost:*"))
+
+;; Her own Chrome, launched separately under gf-chrome.sb.
+(allow network-outbound (remote ip "localhost:9333"))

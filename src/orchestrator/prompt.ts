@@ -31,6 +31,22 @@ export const ARTIFACT_INSTRUCTION =
   '  `__SIMPLECLAW_ARTIFACT__ {"kind":"file","path":"/절대경로","caption":"설명"}`\n' +
   '  `__SIMPLECLAW_ARTIFACT__ {"kind":"url","url":"https://...","caption":"설명"}`';
 
+/**
+ * Sandboxed sessions get no claw-job: `claw-job watch --check` stores a command the unconfined
+ * gateway later runs, which would be a way straight out of the sandbox. Promising a follow-up is
+ * therefore never keepable there, so the instruction has to say so rather than point at a CLI the
+ * session cannot use.
+ */
+export const NO_ASYNC_PROMISE_INSTRUCTION_NO_JOBS =
+  '이 세션은 동기 실행이다 — 응답을 보내면 너는 더 이상 실행되지 않고, 셸에서 띄운 프로세스(nohup·& 포함)도 세션과 함께 죽는다. ' +
+  '이 세션에는 배경 작업 등록 수단이 없다. "완료되면 알려드릴게요/이어가겠습니다/대기하겠습니다" 류의 약속을 하지 말 것 — 전달할 방법이 없다. ' +
+  '이번 턴 안에 끝내거나, 못 끝낸 것과 남은 작업을 명시하라.';
+
+const SANDBOX_ENV_LINE =
+  '이 세션은 샌드박스(macOS Seatbelt) 안에서 실행된다. 작업 공간 밖 경로를 읽으려 하면 `Operation not permitted`가 나는데, ' +
+  '이는 고장이 아니라 설계된 동작이다. 우회를 시도하지 말고, 필요하면 사용자에게 무엇이 필요한지 설명하라. ' +
+  'localhost도 브라우저 자동화용 포트 하나를 빼면 차단돼 있다. 외부 인터넷은 정상이다.';
+
 const BASE_LINES = [
   '한국어로 응답',
   NO_ASYNC_PROMISE_INSTRUCTION,
@@ -73,10 +89,26 @@ const INJECTION_GUARD_LINE =
  * on to summon its own defense — so they are now injected unconditionally.
  */
 export function buildRepoWorkSystemAppend(args: RepoWorkPromptArgs): string {
+  const sandboxed = Boolean(args.repo.sandbox);
   const lines: string[] = [];
   lines.push('지시:');
   for (const line of BASE_LINES) {
+    if (sandboxed && line === NO_ASYNC_PROMISE_INSTRUCTION) {
+      lines.push(`- ${NO_ASYNC_PROMISE_INSTRUCTION_NO_JOBS}`);
+      continue;
+    }
+    if (sandboxed && line.startsWith('작업 끝나면 의미 단위로 git commit')) {
+      // git credentials are already wired up via GIT_CONFIG_GLOBAL; `gh auth setup-git` would
+      // rewrite that file and drop the helper reset it depends on.
+      lines.push(
+        '- 작업 끝나면 의미 단위로 git commit & push까지 완수. 자격증명은 이미 설정돼 있으니 `gh auth setup-git`을 실행하지 말 것. 실패 시 강행 금지(-f X), 보고만.',
+      );
+      continue;
+    }
     lines.push(`- ${line}`);
+  }
+  if (sandboxed) {
+    lines.push(`- ${SANDBOX_ENV_LINE}`);
   }
   lines.push(
     `- 이 채널/세션은 ${args.repo.fullName} 전용. 다른 repo 작업 필요해 보이면 사용자에게 안내만.`,

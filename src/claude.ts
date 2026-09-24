@@ -25,6 +25,18 @@ export interface ClaudeRunOptions {
   timeoutMs?: number;
   /** Extra env vars for the engine process (e.g. SIMPLECLAW_RUN_TOKEN for claw-job). */
   env?: Record<string, string>;
+  /**
+   * Use exactly this environment instead of inheriting `process.env`. For sessions that must not
+   * see the owner's secrets: dotenv loads the whole `.env` into `process.env`, so merging would
+   * hand GH_TOKEN, DISCORD_BOT_TOKEN and the Gmail refresh tokens to the engine. Takes precedence
+   * over `env`.
+   */
+  envReplace?: Record<string, string>;
+  /**
+   * Path to a Seatbelt profile to confine the engine with (`sandbox-exec -f`). Spawn fails loudly
+   * if the profile cannot be applied — never silently falls back to an unconfined process.
+   */
+  sandboxProfile?: string;
 }
 
 export interface ClaudeRunResult {
@@ -253,14 +265,19 @@ function extractAssistantText(obj: StreamJsonObject): string {
   return '';
 }
 
-function sessionDir(cwd: string): string {
+/**
+ * `home` is the engine process's HOME, which is not always ours: a sandboxed session runs with
+ * HOME pointed at its own workspace, and its transcripts land there. Resolving against
+ * `os.homedir()` unconditionally would look in the wrong place and break `--resume`.
+ */
+function sessionDir(cwd: string, home?: string): string {
   const encoded = cwd.replace(/\//g, '-');
-  return path.join(os.homedir(), '.claude', 'projects', encoded);
+  return path.join(home ?? os.homedir(), '.claude', 'projects', encoded);
 }
 
 /** Snapshot the byte-size of every .jsonl file in the session dir. */
-export async function snapshotSessionFiles(cwd: string): Promise<Map<string, number>> {
-  const dir = sessionDir(cwd);
+export async function snapshotSessionFiles(cwd: string, home?: string): Promise<Map<string, number>> {
+  const dir = sessionDir(cwd, home);
   const snapshot = new Map<string, number>();
   const entries = await fs.readdir(dir).catch(() => [] as string[]);
   for (const entry of entries) {
@@ -278,8 +295,9 @@ export async function snapshotSessionFiles(cwd: string): Promise<Map<string, num
 export async function restoreSessionFiles(
   cwd: string,
   snapshot: Map<string, number>,
+  home?: string,
 ): Promise<void> {
-  const dir = sessionDir(cwd);
+  const dir = sessionDir(cwd, home);
   const entries = await fs.readdir(dir).catch(() => [] as string[]);
   for (const entry of entries) {
     if (!entry.endsWith('.jsonl')) continue;
@@ -299,10 +317,10 @@ export async function restoreSessionFiles(
   }
 }
 
-async function lookupLatestSessionId(cwd: string): Promise<string> {
+async function lookupLatestSessionId(cwd: string, home?: string): Promise<string> {
   // Encoding: claude stores sessions in ~/.claude/projects/<encoded-cwd>/<session-id>.jsonl
   // Encoded cwd: replace '/' with '-'. An absolute path like /Users/sumin becomes -Users-sumin.
-  const dir = sessionDir(cwd);
+  const dir = sessionDir(cwd, home);
   const entries = await fs.readdir(dir).catch(() => [] as string[]);
   const jsonl = entries.filter((e) => e.endsWith('.jsonl'));
   if (jsonl.length === 0) {
@@ -432,10 +450,17 @@ export function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
       'claude run start',
     );
 
+    const engineEnv = opts.envReplace ?? (opts.env ? { ...process.env, ...opts.env } : process.env);
+    const engineHome = opts.envReplace?.['HOME'] ?? opts.env?.['HOME'];
+    // sandbox-exec execs the engine in-place, so signals, stdio and exit codes behave as before.
+    const [bin, binArgs] = opts.sandboxProfile
+      ? (['/usr/bin/sandbox-exec', ['-f', opts.sandboxProfile, getClaudeBin(), ...args]] as const)
+      : ([getClaudeBin(), args] as const);
+
     return await new Promise<ClaudeRunResult>((resolve, reject) => {
-      const proc = spawn(getClaudeBin(), args, {
+      const proc = spawn(bin, binArgs as string[], {
         cwd: opts.cwd,
-        env: opts.env ? { ...process.env, ...opts.env } : process.env,
+        env: engineEnv,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 
@@ -591,7 +616,7 @@ export function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
             }
             if (!acc.sessionId) {
               // Fall back to filesystem lookup.
-              acc.sessionId = await lookupLatestSessionId(opts.cwd);
+              acc.sessionId = await lookupLatestSessionId(opts.cwd, engineHome);
             }
             const { text, artifacts } = extractArtifacts(rawText);
             return {
@@ -624,7 +649,7 @@ export function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
                 stderrBuf,
               );
             }
-            const sessionId = obj.session_id || (await lookupLatestSessionId(opts.cwd));
+            const sessionId = obj.session_id || (await lookupLatestSessionId(opts.cwd, engineHome));
             const { text, artifacts } = extractArtifacts(rawText);
             return { text, sessionId, durationMs, exitCode, artifacts, contextWindowUsed: 0, contextWindowMax: 0, costUsd: 0 };
           }
@@ -637,7 +662,7 @@ export function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
               stderrBuf,
             );
           }
-          const sessionId = await lookupLatestSessionId(opts.cwd);
+          const sessionId = await lookupLatestSessionId(opts.cwd, engineHome);
           const { text, artifacts } = extractArtifacts(rawText);
           return { text, sessionId, durationMs, exitCode, artifacts, contextWindowUsed: 0, contextWindowMax: 0, costUsd: 0 };
         };
