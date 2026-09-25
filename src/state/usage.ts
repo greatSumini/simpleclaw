@@ -9,6 +9,8 @@ export interface UsageSnapshot {
   sessionId: string;
   /** Model that served the turn, as reported by the engine. Absent for codex/tmux runs. */
   model?: string;
+  /** True when no model was configured for this channel — the CLI's own default served the turn. */
+  modelIsDefault?: boolean;
   /** Account-wide quota utilization from the CLI's `rate_limit_event`. Absent for codex/tmux runs. */
   rateLimits?: RateLimitSnapshot;
 }
@@ -59,6 +61,7 @@ export function buildUsageFooter(snap: UsageSnapshot, nowMs = Date.now()): strin
   const fiveHour = fmtWindow(snap.rateLimits?.fiveHour, nowMs);
   const weekly = fmtWindow(snap.rateLimits?.sevenDay, nowMs);
   // No model segment at all when the engine didn't report one — a 'model n/a' tells nobody anything.
-  const modelStr = snap.model ? `model ${shortModelName(snap.model)} / ` : '';
+  const defaultTag = snap.modelIsDefault ? ' (default)' : '';
+  const modelStr = snap.model ? `model ${shortModelName(snap.model)}${defaultTag} / ` : '';
   return `[${modelStr}context usage / current ${currentStr} / 5h ${fiveHour} / weekly ${weekly}]`;
 }

@@ -82,6 +82,7 @@ repo 채널의 **새 top-level 메시지**는 runClaude 전에 TypeSafe Jev(Choi
 - `engine: "codex"` / `"tmux"` 채널에서는 무시된다 — codex의 `--model`은 OpenAI 모델명이고, tmux는 대화형 pane이라 해당 플래그가 없다. 판정은 `src/config.ts`의 `resolveEngineModel()`, 설정돼 있으면 부팅 시 warn.
 - `--model`은 매 호출 플래그라 `--resume`에도 적용된다. 진행 중 스레드도 config를 바꾸면 다음 턴부터 새 모델로 돈다 (transcript는 모델 혼용 허용).
 - 실제로 응답한 모델은 메시지 하단 usage footer에 표시된다: `[model sonnet-5 / context usage / ...]`. config 값이 아니라 CLI가 보고한 main-thread 모델(subagent 모델은 제외)이며, 모델 정보가 없는 codex/tmux 런에서는 해당 구간이 아예 빠진다.
+- 해당 채널에 `model`이 설정돼 있지 않아 CLI 기본값으로 돈 경우엔 `(default)`가 붙는다: `[model opus-5 (default) / ...]`. 예상과 다른 모델이 떴을 때 그게 설정된 값인지 기본값인지 footer만 보고 판단할 수 있게 하기 위함.
 
 ---
 

@@ -100,6 +100,11 @@ describe('buildUsageFooter', () => {
       withModel,
       '[model sonnet-5 / context usage / current 16% (159K/1.0M) / 5h n/a / weekly n/a]',
     );
+    // No model configured for the channel → say so, so an unexpected model isn't read as a setting.
+    assert.equal(
+      buildUsageFooter({ ...base, model: 'claude-opus-5', modelIsDefault: true }, now),
+      '[model opus-5 (default) / context usage / current 16% (159K/1.0M) / 5h n/a / weekly n/a]',
+    );
     // codex/tmux report no model — 'model n/a' would be noise, so there is no segment at all.
     assert.equal(
       buildUsageFooter(base, now),

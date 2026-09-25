@@ -848,6 +848,7 @@ export class DiscordGatewayAdapter implements MailAlertPoster {
         contextWindowMax: result.contextWindowMax,
         costUsd: result.costUsd,
         model: result.model,
+        modelIsDefault: true, // wiki-scan has no channel config — always the CLI default
         rateLimits: result.rateLimits,
       });
 
