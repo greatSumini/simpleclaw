@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import type Database from 'better-sqlite3';
 
+import { resolveEngineModel } from '../config.js';
 import type { AppConfig, RepoEntry } from '../config.js';
 import { log } from '../log.js';
 import { runClaude, ClaudeError, snapshotSessionFiles, restoreSessionFiles } from '../claude.js';
@@ -965,7 +966,7 @@ export class DiscordAdapter implements MessengerAdapter {
         channel: channelLabel,
         threadId: threadKey,
         summary: `repo=${repo.fullName} resume=${Boolean(resumeId)}`,
-        meta: { repo: repo.fullName, resume: Boolean(resumeId) },
+        meta: { repo: repo.fullName, resume: Boolean(resumeId), model: resolveEngineModel(repo) },
       });
       emitEvent({
         ts: new Date().toISOString(),
@@ -1001,6 +1002,7 @@ export class DiscordAdapter implements MessengerAdapter {
             contextWindowUsed: 0,
             contextWindowMax: 0,
             costUsd: 0,
+            model: undefined,
           };
         } else if (repo.sandbox) {
           // codex has no sandbox plumbing — a sandboxed repo always runs on claude.
@@ -1013,6 +1015,8 @@ export class DiscordAdapter implements MessengerAdapter {
             timeoutMs: CLAUDE_TIMEOUT_MS,
             envReplace: this.sandboxEnv(repo),
             sandboxProfile: repo.sandbox.profile,
+            // A sandboxed repo always runs on claude, so the alias applies whatever `engine` says.
+            model: repo.model,
           });
         } else {
           const runner = repo.engine === 'codex' ? runCodex : runClaude;
@@ -1024,6 +1028,7 @@ export class DiscordAdapter implements MessengerAdapter {
             signal: controller.signal,
             timeoutMs: CLAUDE_TIMEOUT_MS,
             env: this.engineEnv(threadKey, repo.fullName, ctx.authorId === this.config.env.DISCORD_OWNER_USER_ID),
+            model: resolveEngineModel(repo),
           });
         }
       } catch (err) {
@@ -1076,6 +1081,7 @@ export class DiscordAdapter implements MessengerAdapter {
         contextWindowUsed: result.contextWindowUsed,
         contextWindowMax: result.contextWindowMax,
         costUsd: result.costUsd,
+        model: result.model,
         rateLimits: result.rateLimits,
       });
 
@@ -1234,7 +1240,7 @@ export class DiscordAdapter implements MessengerAdapter {
         channel: channelLabel,
         threadId: threadKey,
         summary: `simpleclaw-maintenance resume=${Boolean(resumeId)}`,
-        meta: { target: 'simpleclaw', resume: Boolean(resumeId) },
+        meta: { target: 'simpleclaw', resume: Boolean(resumeId), model: this.config.channelModels.simpleclaw },
       });
       emitEvent({
         ts: new Date().toISOString(),
@@ -1254,6 +1260,7 @@ export class DiscordAdapter implements MessengerAdapter {
           signal: controller.signal,
           timeoutMs: CLAUDE_TIMEOUT_MS,
           env: this.engineEnv(threadKey, 'simpleclaw', ctx.authorId === this.config.env.DISCORD_OWNER_USER_ID),
+          model: this.config.channelModels.simpleclaw,
         });
       } catch (err) {
         if (controller.signal.aborted) {
@@ -1321,6 +1328,7 @@ export class DiscordAdapter implements MessengerAdapter {
         contextWindowUsed: result.contextWindowUsed,
         contextWindowMax: result.contextWindowMax,
         costUsd: result.costUsd,
+        model: result.model,
         rateLimits: result.rateLimits,
       });
 
@@ -1468,7 +1476,7 @@ export class DiscordAdapter implements MessengerAdapter {
         channel: channelLabel,
         threadId: threadKey,
         summary: `wiki-ingest isUrl=${isUrl}`,
-        meta: { wikiDir, isUrl },
+        meta: { wikiDir, isUrl, model: this.config.channelModels.wiki },
       });
       emitEvent({
         ts: new Date().toISOString(),
@@ -1487,6 +1495,7 @@ export class DiscordAdapter implements MessengerAdapter {
           systemAppend,
           signal: controller.signal,
           timeoutMs: CLAUDE_TIMEOUT_MS,
+          model: this.config.channelModels.wiki,
         });
       } catch (err) {
         if (controller.signal.aborted) {
@@ -1544,6 +1553,7 @@ export class DiscordAdapter implements MessengerAdapter {
         contextWindowUsed: result.contextWindowUsed,
         contextWindowMax: result.contextWindowMax,
         costUsd: result.costUsd,
+        model: result.model,
         rateLimits: result.rateLimits,
       });
 
@@ -1655,7 +1665,7 @@ export class DiscordAdapter implements MessengerAdapter {
         channel: channelLabel,
         threadId: threadKey,
         summary: `root resume=${Boolean(resumeId)}`,
-        meta: { target: 'root', resume: Boolean(resumeId) },
+        meta: { target: 'root', resume: Boolean(resumeId), model: this.config.channelModels.root },
       });
       emitEvent({
         ts: new Date().toISOString(),
@@ -1675,6 +1685,7 @@ export class DiscordAdapter implements MessengerAdapter {
           signal: controller.signal,
           timeoutMs: CLAUDE_TIMEOUT_MS,
           env: this.engineEnv(threadKey, 'root', true), // root channel is owner-only (router-verified)
+          model: this.config.channelModels.root,
         });
       } catch (err) {
         if (controller.signal.aborted) {
@@ -1725,6 +1736,7 @@ export class DiscordAdapter implements MessengerAdapter {
         contextWindowUsed: result.contextWindowUsed,
         contextWindowMax: result.contextWindowMax,
         costUsd: result.costUsd,
+        model: result.model,
         rateLimits: result.rateLimits,
       });
 

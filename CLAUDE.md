@@ -66,6 +66,25 @@ repo 채널의 **새 top-level 메시지**는 runClaude 전에 TypeSafe Jev(Choi
 ---
 ---
 
+## 채널별 모델 지정 — `model` alias
+
+채널의 Claude Code 세션이 어느 모델로 도는지 config에서 정한다. 미지정이면 CLI 기본값(= 기존 동작).
+
+- repo 채널: `simpleclaw.config.json`의 repo 엔트리에 `"model": "opus" | "sonnet" | "haiku"`.
+- repo 없는 채널(root / simpleclaw-maintenance / wiki-ingest): 최상위 `"channelModels": { "root": "opus", ... }`.
+
+```json
+{ "repos": [{ "channelName": "life-os", ..., "model": "sonnet" }],
+  "channelModels": { "wiki": "haiku" } }
+```
+
+- **풀 모델 ID가 아니라 alias로 적는다.** `claude --model opus`가 현 세대로 해석해주므로 세대 교체 때 stale해지지 않는다. 잘못된 값은 zod enum에서 부팅 실패로 드러난다(조용히 무시되지 않게).
+- `engine: "codex"` / `"tmux"` 채널에서는 무시된다 — codex의 `--model`은 OpenAI 모델명이고, tmux는 대화형 pane이라 해당 플래그가 없다. 판정은 `src/config.ts`의 `resolveEngineModel()`, 설정돼 있으면 부팅 시 warn.
+- `--model`은 매 호출 플래그라 `--resume`에도 적용된다. 진행 중 스레드도 config를 바꾸면 다음 턴부터 새 모델로 돈다 (transcript는 모델 혼용 허용).
+- 실제로 응답한 모델은 메시지 하단 usage footer에 표시된다: `[model sonnet-5 / context usage / ...]`. config 값이 아니라 CLI가 보고한 main-thread 모델(subagent 모델은 제외)이며, 모델 정보가 없는 codex/tmux 런에서는 해당 구간이 아예 빠진다.
+
+---
+
 ## Skill 주입 — Claude Code 네이티브 시스템만 사용
 
 SimpleClaw 자체 skill 감지·주입 시스템(`skills/`, `skill-detector.ts`)은 2026-09-23에 제거되었다.

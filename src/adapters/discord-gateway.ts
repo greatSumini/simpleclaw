@@ -847,6 +847,7 @@ export class DiscordGatewayAdapter implements MailAlertPoster {
         contextWindowUsed: result.contextWindowUsed,
         contextWindowMax: result.contextWindowMax,
         costUsd: result.costUsd,
+        model: result.model,
         rateLimits: result.rateLimits,
       });
 

@@ -41,6 +41,8 @@ export interface CodexRunResult {
   contextWindowMax: number;
   /** Always 0 — codex does not expose cost. */
   costUsd: number;
+  /** Never set — the claude model aliases don't apply to codex. */
+  model?: undefined;
   /** Never set — codex does not expose Claude subscription quota. */
   rateLimits?: undefined;
 }

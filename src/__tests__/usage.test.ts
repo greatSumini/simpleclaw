@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { consumeJsonObject, newAccumulator, type StreamJsonObject } from '../claude.js';
-import { buildUsageFooter } from '../state/usage.js';
+import { buildUsageFooter, shortModelName } from '../state/usage.js';
 
 function parse(events: StreamJsonObject[]) {
   const acc = newAccumulator();
@@ -41,6 +41,18 @@ describe('stream-json usage parsing', () => {
       { type: 'assistant', parent_tool_use_id: 'toolu_x', message: { usage: { input_tokens: 2, cache_creation_input_tokens: 27259, cache_read_input_tokens: 16800 } } },
     ]);
     assert.equal(acc.contextWindowUsed, 27119);
+  });
+
+  test('the main thread model is captured; a subagent on another model does not overwrite it', () => {
+    const acc = parse([
+      { type: 'assistant', message: { model: 'claude-sonnet-5', usage: { input_tokens: 2 } } },
+      {
+        type: 'assistant',
+        parent_tool_use_id: 'toolu_x',
+        message: { model: 'claude-haiku-4-5-20251001', usage: { input_tokens: 2 } },
+      },
+    ]);
+    assert.equal(acc.model, 'claude-sonnet-5');
   });
 
   test('result iterations[-1] (incl. output) is the context fill; modelUsage gives the max', () => {
@@ -82,6 +94,19 @@ describe('buildUsageFooter', () => {
     assert.equal(footer, '[context usage / current 16% (159K/1.0M) / 5h 19% / weekly 20%]');
   });
 
+  test('names the model that served the turn, and omits the segment when unknown', () => {
+    const withModel = buildUsageFooter({ ...base, model: 'claude-sonnet-5' }, now);
+    assert.equal(
+      withModel,
+      '[model sonnet-5 / context usage / current 16% (159K/1.0M) / 5h n/a / weekly n/a]',
+    );
+    // codex/tmux report no model — 'model n/a' would be noise, so there is no segment at all.
+    assert.equal(
+      buildUsageFooter(base, now),
+      '[context usage / current 16% (159K/1.0M) / 5h n/a / weekly n/a]',
+    );
+  });
+
   test('n/a when the engine reported no quota data (codex/tmux) or the reading is past its reset', () => {
     assert.equal(
       buildUsageFooter({ ...base, contextWindowMax: 0 }, now),
@@ -92,5 +117,13 @@ describe('buildUsageFooter', () => {
       now,
     );
     assert.equal(stale, '[context usage / current 16% (159K/1.0M) / 5h n/a / weekly n/a]');
+  });
+});
+
+describe('shortModelName', () => {
+  test('strips the vendor prefix and the dated snapshot suffix', () => {
+    assert.equal(shortModelName('claude-haiku-4-5-20251001'), 'haiku-4-5');
+    assert.equal(shortModelName('claude-sonnet-5'), 'sonnet-5');
+    assert.equal(shortModelName('some-other-model'), 'some-other-model');
   });
 });

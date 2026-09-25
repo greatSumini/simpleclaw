@@ -71,6 +71,7 @@ function makeConfig(): AppConfig {
     simpleclawChannelId: SIMPLECLAW_CH,
     wikiChannelId: undefined,
     rootChannelId: undefined,
+    channelModels: {},
     wikiDir: path.join(os.tmpdir(), 'coding-agent-wiki'),
     simpleclawRepoPath: '/tmp/repos/simpleclaw',
     vmcDigest: null,

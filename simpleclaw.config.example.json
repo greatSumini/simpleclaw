@@ -15,9 +15,15 @@
       "fullName": "owner/repo-name",
       "localPath": "/absolute/path/to/repo",
       "category": "code",
-      "description": "Brief description used in routing prompts"
+      "description": "Brief description used in routing prompts",
+      "model": "sonnet"
     }
   ],
+  "channelModels": {
+    "root": "opus",
+    "simpleclaw": "opus",
+    "wiki": "haiku"
+  },
   "gmail": [
     {
       "email": "you@example.com",

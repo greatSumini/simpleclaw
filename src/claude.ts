@@ -17,7 +17,11 @@ export interface ClaudeRunOptions {
    * supports it; otherwise appended after the prompt with a "---" separator.
    */
   systemAppend?: string;
-  /** Override model (e.g. 'claude-haiku-4-5-20251001'). Defaults to CLI's configured model. */
+  /**
+   * Override model. Prefer a CLI alias ('opus' | 'sonnet' | 'haiku') so the resolved model
+   * follows the latest generation; a full id ('claude-haiku-4-5-20251001') also works.
+   * Omit to use the CLI's configured model.
+   */
   model?: string;
   /** Cancellation. Default: none. */
   signal?: AbortSignal;
@@ -60,6 +64,11 @@ export interface ClaudeRunResult {
    * turn-by-turn within the same session), so summing it over-counts by an unknown amount.
    */
   costUsd: number;
+  /**
+   * Model that actually served the main thread, as reported by the CLI (e.g.
+   * 'claude-sonnet-5'). Empty/absent when the output mode carries no model info.
+   */
+  model?: string;
   /** Account-wide subscription quota utilization from the last `rate_limit_event`, if emitted. */
   rateLimits?: RateLimitSnapshot;
 }
@@ -236,6 +245,8 @@ export interface StreamJsonObject {
   is_error?: boolean;
   message?: {
     role?: string;
+    /** Model that produced this assistant turn (full id, e.g. 'claude-sonnet-5'). */
+    model?: string;
     content?: Array<{ type?: string; text?: string }> | string;
     usage?: {
       input_tokens?: number;
@@ -365,6 +376,8 @@ async function lookupLatestSessionId(cwd: string, home?: string): Promise<string
 
 export interface ParseAccumulator {
   sessionId: string;
+  /** Model of the last main-thread assistant turn. '' until an assistant event arrives. */
+  model: string;
   resultText: string;
   resultSeen: boolean;
   resultIsError: boolean;
@@ -378,6 +391,7 @@ export interface ParseAccumulator {
 export function newAccumulator(): ParseAccumulator {
   return {
     sessionId: '',
+    model: '',
     resultText: '',
     resultSeen: false,
     resultIsError: false,
@@ -440,6 +454,8 @@ export function consumeJsonObject(acc: ParseAccumulator, obj: StreamJsonObject):
     if (t) acc.assistantTextFallback += t;
     // Subagent calls have their own, unrelated context window — only the main thread counts.
     if (obj.parent_tool_use_id) return;
+    // Same reason the guard above exists: a subagent may run on a different model than the thread.
+    if (obj.message?.model) acc.model = obj.message.model;
     // Track the last assistant message's input tokens as the current context window fill.
     // Each assistant event corresponds to one API call; the last one reflects the actual
     // context size at the end of the invocation. output_tokens are generated, not "in" the window.
@@ -466,6 +482,7 @@ export function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
         cwd: opts.cwd,
         resume: opts.resume,
         outputMode: caps.outputMode,
+        model: opts.model,
         promptLen: opts.prompt.length,
         systemAppendLen: opts.systemAppend?.length ?? 0,
       },
@@ -653,6 +670,7 @@ export function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
               contextWindowUsed: acc.contextWindowUsed,
               contextWindowMax: acc.contextWindowMax,
               costUsd: acc.costUsd,
+              model: acc.model,
               rateLimits: acc.rateLimits,
             };
           }

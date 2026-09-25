@@ -7,6 +7,8 @@ export interface UsageSnapshot {
   /** Raw `total_cost_usd` from the CLI — see ClaudeRunResult.costUsd for why it can't be summed. */
   costUsd: number;
   sessionId: string;
+  /** Model that served the turn, as reported by the engine. Absent for codex/tmux runs. */
+  model?: string;
   /** Account-wide quota utilization from the CLI's `rate_limit_event`. Absent for codex/tmux runs. */
   rateLimits?: RateLimitSnapshot;
 }
@@ -23,6 +25,14 @@ export function logUsage(db: Database.Database, entry: UsageSnapshot): void {
     entry.contextWindowMax,
     entry.costUsd,
   );
+}
+
+/**
+ * Trim a full model id down to what's worth reading in a footer:
+ * 'claude-haiku-4-5-20251001' → 'haiku-4-5'. Unknown shapes pass through unchanged.
+ */
+export function shortModelName(model: string): string {
+  return model.replace(/^claude-/, '').replace(/-\d{8}$/, '');
 }
 
 function fmtTokens(n: number): string {
@@ -48,5 +58,7 @@ export function buildUsageFooter(snap: UsageSnapshot, nowMs = Date.now()): strin
   }
   const fiveHour = fmtWindow(snap.rateLimits?.fiveHour, nowMs);
   const weekly = fmtWindow(snap.rateLimits?.sevenDay, nowMs);
-  return `[context usage / current ${currentStr} / 5h ${fiveHour} / weekly ${weekly}]`;
+  // No model segment at all when the engine didn't report one — a 'model n/a' tells nobody anything.
+  const modelStr = snap.model ? `model ${shortModelName(snap.model)} / ` : '';
+  return `[${modelStr}context usage / current ${currentStr} / 5h ${fiveHour} / weekly ${weekly}]`;
 }

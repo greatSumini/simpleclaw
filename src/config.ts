@@ -65,6 +65,28 @@ export type Env = z.infer<typeof Schema>;
 
 export type EngineName = 'claude-code' | 'codex' | 'tmux';
 
+/**
+ * Model a channel's Claude Code sessions run on. Stored as a CLI alias, not a full model id:
+ * `claude --model opus` resolves to the current generation, so an alias never goes stale.
+ */
+export type ModelAlias = 'opus' | 'sonnet' | 'haiku';
+
+const ModelAliasSchema = z.enum(['opus', 'sonnet', 'haiku']);
+
+/**
+ * The model to pass to `runClaude` for this repo's sessions — `undefined` means "whatever the CLI
+ * is configured to use" (the default, and what every channel did before this existed).
+ *
+ * Returns `undefined` for non-claude engines: `CodexRunOptions.model` takes OpenAI model names, so
+ * handing it 'opus' would fail the run, and tmux drives an interactive pane that has no such flag.
+ */
+export function resolveEngineModel(
+  repo: Pick<RepoEntry, 'engine' | 'model'>,
+): ModelAlias | undefined {
+  if (repo.engine === 'codex' || repo.engine === 'tmux') return undefined;
+  return repo.model;
+}
+
 export interface RepoEntry {
   channelName: string;
   channelId: string;
@@ -73,6 +95,8 @@ export interface RepoEntry {
   category: 'personal' | 'code';
   description: string;
   engine?: EngineName;
+  /** Model for this channel's sessions. Omit to use the CLI's configured model. claude-code only. */
+  model?: ModelAlias;
   /** Poll for new GitHub issues and post alerts to this repo's Discord channel. */
   watchIssues?: boolean;
   /** Poll for new GitHub pull requests and post alerts to this repo's Discord channel. */
@@ -125,6 +149,10 @@ export interface AppConfig {
    * Undefined if DISCORD_CHANNEL_ROOT not set.
    */
   rootChannelId: string | undefined;
+  /**
+   * Model for the channels that have no repo entry to carry one. Each key omitted → CLI default.
+   */
+  channelModels: { root?: ModelAlias; simpleclaw?: ModelAlias; wiki?: ModelAlias };
   /** Absolute path to the LLM wiki directory */
   wikiDir: string;
   /** Absolute path to this SimpleClaw repository — derived from process.cwd() at startup */
@@ -163,6 +191,7 @@ const RepoEntryConfigSchema = z.object({
   category: z.enum(['personal', 'code']),
   description: z.string().default(''),
   engine: z.enum(['claude-code', 'codex', 'tmux']).optional(),
+  model: ModelAliasSchema.optional(),
   watchIssues: z.boolean().optional(),
   watchPrs: z.boolean().optional(),
   autoSolveIssues: z.boolean().optional(),
@@ -189,6 +218,14 @@ const SimpleClawConfigSchema = z.object({
   githubScopes: z.array(z.string().min(1)).max(25).optional(),
   /** Discord category ID for channels created by the new-project wizard. */
   projectChannelCategoryId: z.string().optional(),
+  /** Model for the non-repo channels (root / simpleclaw-maintenance / wiki-ingest). */
+  channelModels: z
+    .object({
+      root: ModelAliasSchema.optional(),
+      simpleclaw: ModelAliasSchema.optional(),
+      wiki: ModelAliasSchema.optional(),
+    })
+    .optional(),
 });
 
 function loadSimpleClawConfig(): { config: z.infer<typeof SimpleClawConfigSchema>; path: string } {
@@ -228,6 +265,17 @@ export function loadConfig(): AppConfig {
     }))
     .filter((a) => a.refreshToken.length > 0);
 
+  // A model set on a non-claude engine is silently dropped by resolveEngineModel — say so once,
+  // at boot, rather than leaving the owner to wonder why the channel ignores it.
+  for (const repo of repoChannels) {
+    if (repo.model && (repo.engine === 'codex' || repo.engine === 'tmux')) {
+      log.warn(
+        { channel: repo.channelName, engine: repo.engine, model: repo.model },
+        'model is ignored for this channel — only the claude-code engine takes a model alias',
+      );
+    }
+  }
+
   const hubRepo = repoChannels.find((r) => r.isHub);
 
   // Backwards compat: prefer DISCORD_CHANNEL_SIMPLECLAW, fall back to legacy DISCORD_CHANNEL_CLAW.
@@ -259,6 +307,7 @@ export function loadConfig(): AppConfig {
     simpleclawChannelId,
     wikiChannelId: env.DISCORD_CHANNEL_WIKI,
     rootChannelId: env.DISCORD_CHANNEL_ROOT,
+    channelModels: simpleclawConfig.channelModels ?? {},
     wikiDir: env.WIKI_DIR,
     simpleclawRepoPath: process.cwd(),
     vmcDigest:
