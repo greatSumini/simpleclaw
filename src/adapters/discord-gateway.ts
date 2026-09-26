@@ -191,6 +191,7 @@ export class DiscordGatewayAdapter implements MailAlertPoster {
   async stop(): Promise<void> {
     if (!this.started || this.stopped) return;
     this.stopped = true;
+    this.projectWizard.dispose();
 
     // Wait for in-progress wiki-scan before destroying the Discord client.
     // The scan posts results via thread.send(), which needs the client alive.
@@ -231,6 +232,7 @@ export class DiscordGatewayAdapter implements MailAlertPoster {
       { channelId: msg.channelId, authorId: msg.author?.id, isBot: msg.author?.bot },
       'gateway: MessageCreate received',
     );
+    this.projectWizard.onChannelMessage(msg);
     if (msg.author?.bot) return;
     if (!this.client.user) return;
     if (msg.author.id === this.client.user.id) return;

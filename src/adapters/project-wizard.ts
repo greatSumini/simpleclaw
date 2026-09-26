@@ -21,6 +21,7 @@ import {
   ButtonStyle,
   ChannelType,
   LabelBuilder,
+  MessageType,
   ModalBuilder,
   StringSelectMenuBuilder,
   TextInputBuilder,
@@ -28,6 +29,7 @@ import {
   type ButtonInteraction,
   type Client,
   type Guild,
+  type GuildTextBasedChannel,
   type Message,
   type ModalSubmitInteraction,
 } from 'discord.js';
@@ -53,6 +55,9 @@ const F_DESC = 'description';
 
 const PLAN_TTL_MS = 30 * 60_000;
 const LAUNCHER_STATE_FILE = 'project-launcher.json';
+/** Sticky launcher: repost after this much channel silence, if not among the last N messages. */
+const STICKY_IDLE_MS = 5 * 60_000;
+const STICKY_WINDOW = 10;
 
 // ── Pure helpers (unit-tested) ──────────────────────────────────────────────
 
@@ -175,6 +180,8 @@ export class ProjectWizard {
   private readonly plans = new Map<string, ProjectPlan>();
   /** Plans currently executing — blocks double-clicks on ✅ 진행. */
   private readonly running = new Set<string>();
+  private launcherMessageId: string | undefined;
+  private stickyTimer: NodeJS.Timeout | undefined;
 
   constructor(opts: ProjectWizardOpts) {
     this.client = opts.client;
@@ -193,23 +200,83 @@ export class ProjectWizard {
 
   /** Ensure the [🆕 새 프로젝트] launcher message exists in the simpleclaw channel. */
   async ensureLauncher(): Promise<void> {
-    const stateFile = path.join(this.config.paths.dataDir, LAUNCHER_STATE_FILE);
-    const channel = await this.client.channels.fetch(this.launcherChannelId);
-    if (!channel || !channel.isTextBased() || !('send' in channel)) {
-      log.warn({ channelId: this.launcherChannelId }, 'project-wizard: launcher channel not sendable');
-      return;
-    }
+    const channel = await this.fetchLauncherChannel();
+    if (!channel) return;
 
     try {
-      const state = JSON.parse(fs.readFileSync(stateFile, 'utf-8')) as { channelId: string; messageId: string };
+      const state = JSON.parse(fs.readFileSync(this.launcherStateFile, 'utf-8')) as {
+        channelId: string;
+        messageId: string;
+      };
       if (state.channelId === channel.id) {
         await channel.messages.fetch(state.messageId);
+        this.launcherMessageId = state.messageId;
         return; // still there
       }
     } catch {
       /* missing state or deleted message → (re)post */
     }
 
+    await this.postLauncher(channel);
+  }
+
+  /**
+   * Sticky launcher: pins don't keep a message at the bottom of the chat, so once the channel
+   * has been idle for STICKY_IDLE_MS and the launcher has scrolled out of the last
+   * STICKY_WINDOW messages, repost it at the bottom and delete the old one.
+   * Call for every MessageCreate (any author) — non-launcher channels are ignored.
+   */
+  onChannelMessage(msg: Message): void {
+    if (msg.channelId !== this.launcherChannelId || msg.id === this.launcherMessageId) return;
+    // "SimpleClaw pinned a message" notice for our own launcher — pure noise on every repost.
+    if (
+      msg.type === MessageType.ChannelPinnedMessage &&
+      msg.author.id === this.client.user?.id &&
+      msg.reference?.messageId === this.launcherMessageId
+    ) {
+      void msg.delete().catch(() => undefined);
+      return;
+    }
+    if (this.stickyTimer) clearTimeout(this.stickyTimer);
+    this.stickyTimer = setTimeout(() => {
+      this.stickyTimer = undefined;
+      void this.bumpLauncher().catch((err: Error) => {
+        log.warn({ err: err.message }, 'project-wizard: launcher bump failed');
+      });
+    }, STICKY_IDLE_MS);
+    this.stickyTimer.unref();
+  }
+
+  dispose(): void {
+    if (this.stickyTimer) clearTimeout(this.stickyTimer);
+    this.stickyTimer = undefined;
+  }
+
+  private async bumpLauncher(): Promise<void> {
+    const channel = await this.fetchLauncherChannel();
+    if (!channel) return;
+    const recent = await channel.messages.fetch({ limit: STICKY_WINDOW });
+    if (this.launcherMessageId && recent.has(this.launcherMessageId)) return; // still visible
+    const oldId = this.launcherMessageId;
+    // Post first, then delete — the launcher is never absent.
+    await this.postLauncher(channel);
+    if (oldId) await channel.messages.delete(oldId).catch(() => undefined);
+  }
+
+  private get launcherStateFile(): string {
+    return path.join(this.config.paths.dataDir, LAUNCHER_STATE_FILE);
+  }
+
+  private async fetchLauncherChannel(): Promise<GuildTextBasedChannel | null> {
+    const channel = await this.client.channels.fetch(this.launcherChannelId);
+    if (!channel || !channel.isTextBased() || channel.isDMBased()) {
+      log.warn({ channelId: this.launcherChannelId }, 'project-wizard: launcher channel not sendable');
+      return null;
+    }
+    return channel;
+  }
+
+  private async postLauncher(channel: GuildTextBasedChannel): Promise<void> {
     const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId(ID_NEW).setLabel('새 프로젝트').setEmoji('🆕').setStyle(ButtonStyle.Primary),
     );
@@ -217,7 +284,8 @@ export class ProjectWizard {
       content: '**프로젝트 생성** — GitHub repo 생성·clone, Discord 채널 생성, SimpleClaw 연결을 한 번에 합니다.',
       components: [row],
     });
-    fs.writeFileSync(stateFile, JSON.stringify({ channelId: channel.id, messageId: msg.id }) + '\n');
+    this.launcherMessageId = msg.id;
+    fs.writeFileSync(this.launcherStateFile, JSON.stringify({ channelId: channel.id, messageId: msg.id }) + '\n');
     await msg.pin().catch((err: Error) => {
       log.info({ err: err.message }, 'project-wizard: launcher pin failed (needs Pin Messages permission)');
     });
