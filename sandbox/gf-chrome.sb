@@ -9,6 +9,14 @@
 ;; inside an outer one ("sandbox initialization failed: Operation not permitted"). That drops
 ;; Chrome's renderer sandbox, so this browser is for automation only — the outer profile is
 ;; what still contains a compromised renderer.
+;;
+;; Chrome must also get --use-mock-keychain. Otherwise it reads its cookie-encryption key from
+;; the login keychain, which the /Users/sumin deny below blocks (~/Library/Keychains). The network
+;; service then stalls: CDP still answers and tabs open, but every http(s) navigation hangs at
+;; about:blank and Page.enable / Runtime.evaluate never return. Allowing the keychain instead
+;; would hand this browser the owner's "Chrome Safe Storage" key.
+;;
+;; Launched by ~/Library/LaunchAgents/com.simpleclaw.gf-chrome.plist (copy: sandbox/).
 
 (version 1)
 (allow default)
